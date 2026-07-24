@@ -200,6 +200,7 @@ func TestNormalizeTarget(t *testing.T) {
 		{"gastown/polecats", "gastown/polecats", true},
 		{"gastown/polecat", "gastown/polecats", true},
 		{"mayor", "mayor", true},
+		{"clerk", "clerk", true},
 		{"invalid", "", false},
 		{"gastown/invalid", "", false},
 	}
@@ -577,6 +578,29 @@ func TestComputeExpectedNoBase(t *testing.T) {
 		t.Error("expected crew to inherit SessionStart from DefaultBase")
 	}
 
+	// Clerk gets fail-closed external task-system and session-topology guards.
+	clerk, err := ComputeExpected("clerk")
+	if err != nil {
+		t.Fatalf("ComputeExpected(clerk) failed: %v", err)
+	}
+	clerkMatchers := map[string]bool{
+		"mcp__clickup__.*": false,
+		"Bash(tmux*)":      false,
+	}
+	for _, entry := range clerk.PreToolUse {
+		if _, ok := clerkMatchers[entry.Matcher]; ok {
+			clerkMatchers[entry.Matcher] = true
+		}
+	}
+	for matcher, found := range clerkMatchers {
+		if !found {
+			t.Errorf("clerk missing native guard matcher: %s", matcher)
+		}
+	}
+	if len(clerk.SessionStart) != len(defaultBase.SessionStart) {
+		t.Error("expected clerk to inherit SessionStart from DefaultBase")
+	}
+
 	// Witness should get DefaultBase + built-in patrol-formula-guard (gt-e47hxn)
 	witness, err := ComputeExpected("witness")
 	if err != nil {
@@ -813,6 +837,7 @@ func TestDiscoverTargets(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	os.MkdirAll(filepath.Join(tmpDir, "mayor"), 0755)
+	os.MkdirAll(filepath.Join(tmpDir, "clerk"), 0755)
 	os.MkdirAll(filepath.Join(tmpDir, "deacon"), 0755)
 	os.MkdirAll(filepath.Join(tmpDir, "testrig", "crew", "alice"), 0755)
 	os.MkdirAll(filepath.Join(tmpDir, "testrig", "crew", "bob"), 0755)
@@ -823,8 +848,8 @@ func TestDiscoverTargets(t *testing.T) {
 		t.Fatalf("DiscoverTargets failed: %v", err)
 	}
 
-	if len(targets) < 4 {
-		t.Errorf("expected at least 4 targets, got %d", len(targets))
+	if len(targets) < 5 {
+		t.Errorf("expected at least 5 targets, got %d", len(targets))
 		for _, tgt := range targets {
 			t.Logf("  target: %s (key=%s)", tgt.DisplayKey(), tgt.Key)
 		}
@@ -835,7 +860,7 @@ func TestDiscoverTargets(t *testing.T) {
 		found[tgt.DisplayKey()] = true
 	}
 
-	for _, expected := range []string{"mayor", "deacon", "testrig/crew", "testrig/witness"} {
+	for _, expected := range []string{"mayor", "clerk", "deacon", "testrig/crew", "testrig/witness"} {
 		if !found[expected] {
 			t.Errorf("expected target %q not found", expected)
 		}
@@ -846,6 +871,7 @@ func TestDiscoverTargets_RoleNames(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	os.MkdirAll(filepath.Join(tmpDir, "mayor"), 0755)
+	os.MkdirAll(filepath.Join(tmpDir, "clerk"), 0755)
 	os.MkdirAll(filepath.Join(tmpDir, "deacon"), 0755)
 	os.MkdirAll(filepath.Join(tmpDir, "rig1", "crew", "alice"), 0755)
 	os.MkdirAll(filepath.Join(tmpDir, "rig1", "polecats", "toast"), 0755)
@@ -865,6 +891,7 @@ func TestDiscoverTargets_RoleNames(t *testing.T) {
 
 	expected := map[string]string{
 		"mayor":         "mayor",
+		"clerk":         "clerk",
 		"deacon":        "deacon",
 		"rig1/crew":     "crew",
 		"rig1/polecats": "polecat",
@@ -888,6 +915,7 @@ func TestDiscoverTargets_ReturnsOnlyClaude(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	os.MkdirAll(filepath.Join(tmpDir, "mayor"), 0755)
+	os.MkdirAll(filepath.Join(tmpDir, "clerk"), 0755)
 	os.MkdirAll(filepath.Join(tmpDir, "deacon"), 0755)
 
 	// Create a rig with crew members that have both Claude and Gemini settings.
@@ -917,6 +945,7 @@ func TestDiscoverRoleLocations(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	os.MkdirAll(filepath.Join(tmpDir, "mayor"), 0755)
+	os.MkdirAll(filepath.Join(tmpDir, "clerk"), 0755)
 	os.MkdirAll(filepath.Join(tmpDir, "deacon"), 0755)
 	os.MkdirAll(filepath.Join(tmpDir, "rig1", "crew", "alice"), 0755)
 	os.MkdirAll(filepath.Join(tmpDir, "rig1", "polecats", "toast"), 0755)
@@ -939,6 +968,7 @@ func TestDiscoverRoleLocations(t *testing.T) {
 		rig, role string
 	}{
 		{"", "mayor"},
+		{"", "clerk"},
 		{"", "deacon"},
 		{"rig1", "crew"},
 		{"rig1", "polecat"},

@@ -7,11 +7,14 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/clerk"
 	"github.com/steveyegge/gastown/internal/cli"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/doctor"
 	"github.com/steveyegge/gastown/internal/formula"
 	"github.com/steveyegge/gastown/internal/hooks"
+	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -34,8 +37,9 @@ a new binary. It orchestrates all migration steps in the right order:
   1. Structural checks   Run gt doctor --fix to repair workspace structure
   2. CLAUDE.md sync       Update town root CLAUDE.md from embedded template
   3. Daemon defaults      Ensure daemon.json has lifecycle defaults
-  4. Hooks sync           Regenerate settings.json from hook registry
-  5. Formula update       Update formulas from embedded copies
+  4. Clerk provisioning   Ensure the native supervised Clerk is present
+  5. Hooks sync           Regenerate settings.json from hook registry
+  6. Formula update       Update formulas from embedded copies
 
 Each step reports what changed. Use --dry-run to preview without modifying.
 
@@ -89,13 +93,17 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	r3 := upgradeDaemonConfig(townRoot)
 	results = append(results, r3)
 
-	// Step 4: Sync hooks registry to settings.json
-	r4 := upgradeHooksSync(townRoot)
+	// Step 4: Ensure native Clerk files and runtime settings.
+	r4 := upgradeClerk(townRoot)
 	results = append(results, r4)
 
-	// Step 5: Update formulas from embedded copies
-	r5 := upgradeFormulas(townRoot)
+	// Step 5: Sync hooks registry to settings.json
+	r5 := upgradeHooksSync(townRoot)
 	results = append(results, r5)
+
+	// Step 6: Update formulas from embedded copies
+	r6 := upgradeFormulas(townRoot)
+	results = append(results, r6)
 
 	// Print summary
 	printUpgradeSummary(results)
@@ -296,11 +304,47 @@ func upgradeDaemonConfig(townRoot string) upgradeResult {
 	return result
 }
 
+func upgradeClerk(townRoot string) upgradeResult {
+	result := upgradeResult{step: "Clerk provisioning"}
+
+	fmt.Printf("\n  %s %s\n", style.Bold.Render("4."), "Ensuring native supervised Clerk...")
+	provisioned, err := clerk.Provision(townRoot, upgradeDryRun)
+	if err != nil {
+		result.details = append(result.details, fmt.Sprintf("error provisioning: %v", err))
+		fmt.Printf("     %s Could not provision Clerk: %v\n", style.ErrorPrefix, err)
+		return result
+	}
+	result.changed = provisioned.Changed()
+
+	if upgradeDryRun {
+		if result.changed == 0 {
+			fmt.Printf("     %s Clerk %s\n", style.SuccessPrefix, style.Dim.Render("up-to-date"))
+		} else {
+			fmt.Printf("     %s Clerk %s\n", style.WarningPrefix, style.Dim.Render("would provision"))
+		}
+		return result
+	}
+
+	clerkDir := filepath.Join(townRoot, "clerk")
+	runtimeConfig := config.ResolveRoleAgentConfig(constants.RoleClerk, townRoot, clerkDir)
+	if err := runtime.EnsureSettingsForRole(clerkDir, clerkDir, constants.RoleClerk, runtimeConfig); err != nil {
+		result.details = append(result.details, fmt.Sprintf("runtime settings: %v", err))
+		fmt.Printf("     %s Could not sync Clerk runtime settings: %v\n", style.WarningPrefix, err)
+		return result
+	}
+	if result.changed == 0 {
+		fmt.Printf("     %s Clerk %s\n", style.SuccessPrefix, style.Dim.Render("present and valid"))
+	} else {
+		fmt.Printf("     %s Clerk %s\n", style.SuccessPrefix, style.Dim.Render("provisioned"))
+	}
+	return result
+}
+
 // upgradeHooksSync syncs hook registry to all settings.json files.
 func upgradeHooksSync(townRoot string) upgradeResult {
 	result := upgradeResult{step: "Hooks sync"}
 
-	fmt.Printf("\n  %s %s\n", style.Bold.Render("4."), "Syncing hooks to settings.json...")
+	fmt.Printf("\n  %s %s\n", style.Bold.Render("5."), "Syncing hooks to settings.json...")
 
 	targets, err := hooks.DiscoverTargets(townRoot)
 	if err != nil {
@@ -390,7 +434,7 @@ func upgradeHooksSync(townRoot string) upgradeResult {
 func upgradeFormulas(townRoot string) upgradeResult {
 	result := upgradeResult{step: "Formulas"}
 
-	fmt.Printf("\n  %s %s\n", style.Bold.Render("5."), "Updating formulas from embedded copies...")
+	fmt.Printf("\n  %s %s\n", style.Bold.Render("6."), "Updating formulas from embedded copies...")
 
 	if upgradeDryRun {
 		// In dry-run mode, just check health

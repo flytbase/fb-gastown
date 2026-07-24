@@ -122,6 +122,19 @@ func SetDefaultRegistry(r *PrefixRegistry) {
 func InitRegistry(townRoot string) error {
 	var errs []error
 
+	// Resolve the Town-wide terminal transport before any manager constructs
+	// the compatibility facade. This makes every native role use the same
+	// persisted backend and propagates the choice to daemon/agent children.
+	backend, err := config.ResolveSessionBackend(townRoot)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("session backend: %w", err))
+	} else {
+		_ = os.Setenv(config.SessionBackendEnv, backend)
+	}
+	if strings.TrimSpace(os.Getenv("GT_ROOT")) == "" {
+		_ = os.Setenv("GT_ROOT", townRoot)
+	}
+
 	// Determine the tmux socket name from GT_TMUX_SOCKET env var:
 	//   unset / "default" / "auto" → per-town socket derived from town directory path
 	//   any other value            → use that name as-is

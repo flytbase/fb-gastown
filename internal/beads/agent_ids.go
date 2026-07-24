@@ -13,10 +13,10 @@ import (
 const TownBeadsPrefix = "hq"
 
 // Town-level agent bead IDs use the "hq-" prefix and are stored in town beads.
-// These are global agents that operate at the town level (mayor, deacon, dogs).
+// These are global agents that operate at the town level (mayor, clerk, deacon, dogs).
 //
 // The naming convention is:
-//   - hq-<role>       for singletons (mayor, deacon)
+//   - hq-<role>       for singletons (mayor, clerk, deacon)
 //   - hq-dog-<name>   for named agents (dogs)
 //   - hq-<role>-role  for role definition beads
 
@@ -24,6 +24,12 @@ const TownBeadsPrefix = "hq"
 // This uses the "hq-" prefix for town-level storage.
 func MayorBeadIDTown() string {
 	return TownBeadsPrefix + "-mayor"
+}
+
+// ClerkBeadIDTown returns the Clerk agent bead ID for town-level beads.
+// This uses the "hq-" prefix for town-level storage.
+func ClerkBeadIDTown() string {
+	return TownBeadsPrefix + "-clerk"
 }
 
 // DeaconBeadIDTown returns the Deacon agent bead ID for town-level beads.
@@ -43,16 +49,17 @@ func DogBeadIDTown(name string) string {
 // ValidAgentRoles are the known agent role types for ID pattern validation.
 var ValidAgentRoles = []string{
 	constants.RoleMayor,    // Town-level: gt-mayor
+	constants.RoleClerk,    // Town-level: gt-clerk
 	constants.RoleDeacon,   // Town-level: gt-deacon
 	"dog",                  // Town-level with name: gt-dog-<name>
 	constants.RoleWitness,  // Per-rig: gt-<rig>-witness
 	constants.RoleRefinery, // Per-rig: gt-<rig>-refinery
-	constants.RoleCrew,    // Per-rig with name: gt-<rig>-crew-<name>
-	constants.RolePolecat, // Per-rig with name: gt-<rig>-polecat-<name>
+	constants.RoleCrew,     // Per-rig with name: gt-<rig>-crew-<name>
+	constants.RolePolecat,  // Per-rig with name: gt-<rig>-polecat-<name>
 }
 
 // TownLevelRoles are agent roles that don't have a rig.
-var TownLevelRoles = []string{constants.RoleMayor, constants.RoleDeacon}
+var TownLevelRoles = []string{constants.RoleMayor, constants.RoleClerk, constants.RoleDeacon}
 
 // TownLevelNamedRoles are town-level agent roles that include a name.
 var TownLevelNamedRoles = []string{"dog"}
@@ -464,7 +471,7 @@ func IsAgentSessionBead(beadID string) bool {
 	}
 	// Known agent roles
 	switch role {
-	case constants.RoleMayor, constants.RoleDeacon, constants.RoleWitness, constants.RoleRefinery, constants.RoleCrew, constants.RolePolecat, "dog":
+	case constants.RoleMayor, constants.RoleClerk, constants.RoleDeacon, constants.RoleWitness, constants.RoleRefinery, constants.RoleCrew, constants.RolePolecat, "dog":
 		return true
 	default:
 		return false

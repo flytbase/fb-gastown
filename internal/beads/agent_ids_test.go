@@ -14,6 +14,14 @@ func TestMayorBeadIDTown(t *testing.T) {
 	}
 }
 
+func TestClerkBeadIDTown(t *testing.T) {
+	got := ClerkBeadIDTown()
+	want := "hq-clerk"
+	if got != want {
+		t.Errorf("ClerkBeadIDTown() = %q, want %q", got, want)
+	}
+}
+
 // TestDeaconBeadIDTown tests the town-level Deacon bead ID.
 func TestDeaconBeadIDTown(t *testing.T) {
 	got := DeaconBeadIDTown()
@@ -265,4 +273,3 @@ func TestAgentBeadIDRoundTrip(t *testing.T) {
 		})
 	}
 }
-

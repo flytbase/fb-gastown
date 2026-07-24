@@ -43,6 +43,10 @@ type TownSettings struct {
 	Type    string `json:"type"`    // "town-settings"
 	Version int    `json:"version"` // schema version
 
+	// SessionBackend selects the Town-wide terminal transport.
+	// Supported values are "tmux" (default) and "herdr".
+	SessionBackend string `json:"session_backend,omitempty"`
+
 	// CLITheme controls CLI output color scheme.
 	// Values: "dark", "light", "auto" (default).
 	// "auto" lets the terminal emulator's background color guide the choice.
@@ -125,11 +129,12 @@ type TownSettings struct {
 // NewTownSettings creates a new TownSettings with defaults.
 func NewTownSettings() *TownSettings {
 	return &TownSettings{
-		Type:         "town-settings",
-		Version:      CurrentTownSettingsVersion,
-		DefaultAgent: "claude",
-		Agents:       make(map[string]*RuntimeConfig),
-		RoleAgents:   make(map[string]string),
+		Type:           "town-settings",
+		Version:        CurrentTownSettingsVersion,
+		SessionBackend: SessionBackendTmux,
+		DefaultAgent:   "claude",
+		Agents:         make(map[string]*RuntimeConfig),
+		RoleAgents:     make(map[string]string),
 	}
 }
 

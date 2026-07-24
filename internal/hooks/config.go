@@ -243,6 +243,49 @@ func DefaultOverrides() map[string]*HooksConfig {
 				},
 			},
 		},
+		// Clerk is supervised and may coordinate native dispatch only through
+		// the capability-gated `gt clerk sling` path. Its external task-system
+		// adapter is optional, but access fails closed unless the configured
+		// Town-local guard exists.
+		"clerk": {
+			PreToolUse: []HookEntry{
+				{
+					Matcher: "mcp__clickup__.*",
+					Hooks: []Hook{{
+						Type:    "command",
+						Command: "if [ -x \"$GT_ROOT/clerk/bin/guard-clickup-scope\" ]; then exec \"$GT_ROOT/clerk/bin/guard-clickup-scope\"; else echo 'BLOCKED: Clerk ClickUp guard is not configured.' >&2; exit 2; fi",
+					}},
+				},
+				{
+					Matcher: "Bash(tmux*)",
+					Hooks: []Hook{{
+						Type:    "command",
+						Command: "echo 'BLOCKED: Clerk uses the configured Gas Town session backend, never raw tmux.' >&2; exit 2",
+					}},
+				},
+				{
+					Matcher: "Bash(gt up*)|Bash(gt mayor*)|Bash(gt sling*)|Bash(gt assign*)|Bash(gt mountain*)",
+					Hooks: []Hook{{
+						Type:    "command",
+						Command: "echo 'BLOCKED: Clerk dispatch requires gt clerk request/authorize/sling.' >&2; exit 2",
+					}},
+				},
+				{
+					Matcher: "Bash(herdr pane run*)|Bash(herdr pane split*)|Bash(herdr pane close*)|Bash(herdr pane rename*)|Bash(herdr pane move*)",
+					Hooks: []Hook{{
+						Type:    "command",
+						Command: "echo 'BLOCKED: Clerk may observe Herdr but cannot mutate pane topology.' >&2; exit 2",
+					}},
+				},
+				{
+					Matcher: "Bash(herdr workspace create*)|Bash(herdr workspace close*)|Bash(herdr tab create*)|Bash(herdr tab close*)|Bash(herdr worktree*)|Bash(herdr server stop*)",
+					Hooks: []Hook{{
+						Type:    "command",
+						Command: "echo 'BLOCKED: Clerk may observe Herdr but cannot mutate session topology.' >&2; exit 2",
+					}},
+				},
+			},
+		},
 		// Witness roles: patrol-formula-guard (gt-e47hxn).
 		// Blocks patrol formulas from using persistent molecules — must use wisps.
 		// Without this, witnesses could accidentally create permanent patrol molecules
@@ -406,11 +449,16 @@ func ComputeExpected(target string) (*HooksConfig, error) {
 func DiscoverTargets(townRoot string) ([]Target, error) {
 	var targets []Target
 
-	// Town-level targets (mayor/deacon cwd IS the settings dir)
+	// Town-level targets (mayor/clerk/deacon cwd IS the settings dir)
 	targets = append(targets, Target{
 		Path: filepath.Join(townRoot, "mayor", ".claude", "settings.json"),
 		Key:  "mayor",
 		Role: "mayor",
+	})
+	targets = append(targets, Target{
+		Path: filepath.Join(townRoot, "clerk", ".claude", "settings.json"),
+		Key:  "clerk",
+		Role: "clerk",
 	})
 	targets = append(targets, Target{
 		Path: filepath.Join(townRoot, "deacon", ".claude", "settings.json"),
@@ -425,7 +473,7 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() || entry.Name() == "mayor" || entry.Name() == "deacon" ||
+		if !entry.IsDir() || entry.Name() == "mayor" || entry.Name() == "clerk" || entry.Name() == "deacon" ||
 			entry.Name() == ".beads" || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
@@ -495,7 +543,7 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 type RoleLocation struct {
 	Dir  string // Absolute path to the role's parent directory (e.g., .../rig/crew)
 	Rig  string // Rig name, or empty for town-level roles
-	Role string // Role name: crew, polecat, witness, refinery, mayor, deacon
+	Role string // Role name: crew, polecat, witness, refinery, mayor, clerk, deacon
 }
 
 // DiscoverRoleLocations finds all role directories in a workspace.
@@ -505,7 +553,7 @@ func DiscoverRoleLocations(townRoot string) ([]RoleLocation, error) {
 	var locations []RoleLocation
 
 	// Town-level roles
-	for _, role := range []string{"mayor", "deacon"} {
+	for _, role := range []string{"mayor", "clerk", "deacon"} {
 		dir := filepath.Join(townRoot, role)
 		if info, err := os.Stat(dir); err == nil && info.IsDir() {
 			locations = append(locations, RoleLocation{Dir: dir, Role: role})
@@ -519,7 +567,7 @@ func DiscoverRoleLocations(townRoot string) ([]RoleLocation, error) {
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() || entry.Name() == "mayor" || entry.Name() == "deacon" ||
+		if !entry.IsDir() || entry.Name() == "mayor" || entry.Name() == "clerk" || entry.Name() == "deacon" ||
 			entry.Name() == ".beads" || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
@@ -812,7 +860,7 @@ func NormalizeTarget(target string) (string, bool) {
 
 	validRoles := map[string]bool{
 		"crew": true, "witness": true, "refinery": true,
-		"polecats": true, "mayor": true, "deacon": true,
+		"polecats": true, "mayor": true, "clerk": true, "deacon": true,
 	}
 
 	// Simple role target

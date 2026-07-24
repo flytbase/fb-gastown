@@ -13,7 +13,7 @@ import (
 
 // AgentBeadsCheck verifies that agent beads exist for all agents.
 // This includes:
-// - Global agents (deacon, mayor) - stored in town beads with hq- prefix
+// - Global agents (mayor, clerk, deacon) - stored in town beads with hq- prefix
 // - Per-rig agents (witness, refinery) - stored in each rig's beads
 // - Crew workers - stored in each rig's beads
 //
@@ -131,11 +131,13 @@ func (c *AgentBeadsCheck) Run(ctx *CheckContext) *CheckResult {
 		checked++
 	}
 
-	// Check global agents (Mayor, Deacon)
+	// Check global agents (Mayor, Clerk, Deacon)
 	deaconID := beads.DeaconBeadIDTown()
+	clerkID := beads.ClerkBeadIDTown()
 	mayorID := beads.MayorBeadIDTown()
 
 	checkAgentBead(deaconID)
+	checkAgentBead(clerkID)
 	checkAgentBead(mayorID)
 
 	if len(prefixToRig) == 0 {
@@ -221,7 +223,7 @@ func (c *AgentBeadsCheck) Fix(ctx *CheckContext) error {
 	// block fixes for all other rigs.
 	var errs []error
 
-	// Fix global agents (Mayor, Deacon) in town beads
+	// Fix global agents (Mayor, Clerk, Deacon) in town beads
 	townBeadsPath := beads.GetTownBeadsPath(ctx.TownRoot)
 	townBd := beads.New(townBeadsPath)
 
@@ -317,6 +319,14 @@ func (c *AgentBeadsCheck) Fix(ctx *CheckContext) error {
 	if err := fixAgentBead(townBd, townBeadsPath, deaconID,
 		"Deacon (daemon beacon) - receives mechanical heartbeats, runs town plugins and monitoring.",
 		&beads.AgentFields{RoleType: "deacon", AgentState: "idle"},
+	); err != nil {
+		errs = append(errs, err)
+	}
+
+	clerkID := beads.ClerkBeadIDTown()
+	if err := fixAgentBead(townBd, townBeadsPath, clerkID,
+		"Clerk - supervised task coordinator and authorized native Polecat dispatcher.",
+		&beads.AgentFields{RoleType: "clerk", AgentState: "idle"},
 	); err != nil {
 		errs = append(errs, err)
 	}

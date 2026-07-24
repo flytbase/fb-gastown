@@ -4,11 +4,13 @@ package runtime
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/cli"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/hooks"
 	"github.com/steveyegge/gastown/internal/hookutil"
 	"github.com/steveyegge/gastown/internal/templates/commands"
@@ -41,8 +43,19 @@ func EnsureSettingsForRole(settingsDir, workDir, role string, rc *config.Runtime
 	if preset := config.GetAgentPresetByName(provider); preset != nil {
 		useSettingsDir = preset.HooksUseSettingsDir
 	}
-	if err := hooks.InstallForRole(provider, settingsDir, workDir, role, rc.Hooks.Dir, rc.Hooks.SettingsFile, useSettingsDir); err != nil {
-		return err
+	if provider == "claude" && useSettingsDir && isTownHeadRole(role) {
+		target := hooks.Target{
+			Path: filepath.Join(settingsDir, rc.Hooks.Dir, rc.Hooks.SettingsFile),
+			Key:  role,
+			Role: role,
+		}
+		if _, err := hooks.SyncManagedTarget(target, false); err != nil {
+			return err
+		}
+	} else {
+		if err := hooks.InstallForRole(provider, settingsDir, workDir, role, rc.Hooks.Dir, rc.Hooks.SettingsFile, useSettingsDir); err != nil {
+			return err
+		}
 	}
 
 	// 2. Slash commands (agent-agnostic, uses shared body with provider-specific frontmatter)
@@ -54,6 +67,15 @@ func EnsureSettingsForRole(settingsDir, workDir, role string, rc *config.Runtime
 	}
 
 	return nil
+}
+
+func isTownHeadRole(role string) bool {
+	switch role {
+	case constants.RoleMayor, constants.RoleClerk, constants.RoleDeacon:
+		return true
+	default:
+		return false
+	}
 }
 
 type startupPromptSession interface {

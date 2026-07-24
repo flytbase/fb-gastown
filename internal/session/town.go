@@ -10,10 +10,10 @@ import (
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
-// TownSession represents a town-level tmux session.
+// TownSession represents a town-level terminal session.
 type TownSession struct {
 	Name      string // Display name (e.g., "Mayor")
-	SessionID string // Tmux session ID (e.g., "hq-mayor")
+	SessionID string // Logical session ID (e.g., "hq-mayor")
 }
 
 // TownSessions returns the list of town-level sessions in shutdown order.
@@ -21,13 +21,14 @@ type TownSession struct {
 // otherwise Boot will try to restart Deacon.
 func TownSessions() []TownSession {
 	return []TownSession{
+		{"Clerk", ClerkSessionName()},
 		{"Mayor", MayorSessionName()},
 		{"Boot", BootSessionName()},
 		{"Deacon", DeaconSessionName()},
 	}
 }
 
-// StopTownSession stops a single town-level tmux session.
+// StopTownSession stops a single town-level terminal session.
 // If force is true, skips graceful shutdown (Ctrl-C) and kills immediately.
 // Returns true if the session was running and stopped, false if not running.
 func StopTownSession(t *tmux.Tmux, ts TownSession, force bool) (bool, error) {

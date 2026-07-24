@@ -227,13 +227,6 @@ func NewTmuxWithSocket(socket string) *Tmux {
 	return &Tmux{socketName: socket}
 }
 
-// NewHerdr creates a session facade explicitly bound to a resolved Town.
-// Management commands use this before a child agent has inherited GT_ROOT.
-func NewHerdr(townRoot string) *Tmux {
-	client, err := herdr.NewFromEnvironmentWithTownRoot(townRoot)
-	return &Tmux{herdr: client, backendError: err}
-}
-
 func (t *Tmux) herdrBackend() (*herdr.Client, bool, error) {
 	if t.herdr != nil {
 		return t.herdr, true, nil
@@ -299,6 +292,16 @@ func (t *Tmux) NewSession(name, workDir string) error {
 	if err := validateSessionName(name); err != nil {
 		return err
 	}
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		shell := strings.TrimSpace(os.Getenv("SHELL"))
+		if shell == "" {
+			shell = "/bin/sh"
+		}
+		return client.Create(name, workDir, shell, nil)
+	}
 	args := []string{"new-session", "-d", "-s", name}
 	if workDir != "" {
 		args = append(args, "-c", workDir)
@@ -337,6 +340,12 @@ func (t *Tmux) NewSessionWithCommand(name, workDir, command string) error {
 	}
 	if err := validateCommandBinary(command); err != nil {
 		return err
+	}
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return client.Create(name, workDir, command, nil)
 	}
 
 	// Defense-in-depth: remove CLAUDECODE from the tmux server's global
@@ -1034,6 +1043,9 @@ func (t *Tmux) KillPaneProcessesExcluding(pane string, excludePIDs []string) err
 // ServerPID returns the PID of the tmux server process.
 // Returns 0 if the server is not running or the PID cannot be determined.
 func (t *Tmux) ServerPID() int {
+	if _, enabled, _ := t.herdrBackend(); enabled {
+		return 0
+	}
 	out, err := t.run("display-message", "-p", "#{pid}")
 	if err != nil {
 		return 0
@@ -1044,6 +1056,12 @@ func (t *Tmux) ServerPID() int {
 
 // KillServer terminates the entire tmux server and all sessions.
 func (t *Tmux) KillServer() error {
+	if client, enabled, backendErr := t.herdrBackend(); enabled {
+		if backendErr != nil {
+			return backendErr
+		}
+		return client.StopServer()
+	}
 	_, err := t.run("kill-server")
 	if errors.Is(err, ErrNoServer) {
 		return nil // Already dead
@@ -1057,6 +1075,9 @@ func (t *Tmux) KillServer() error {
 // This is useful during shutdown to prevent the server from exiting
 // when all Gas Town sessions are killed but the user has no other sessions.
 func (t *Tmux) SetExitEmpty(on bool) error {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		return err
+	}
 	value := "on"
 	if !on {
 		value = "off"
@@ -1170,6 +1191,16 @@ func NewSessionSet(names []string) *SessionSet {
 //
 // Builds the map directly from tmux output to avoid intermediate slice allocation.
 func (t *Tmux) GetSessionSet() (*SessionSet, error) {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return nil, err
+		}
+		names, err := client.List()
+		if err != nil {
+			return nil, err
+		}
+		return NewSessionSet(names), nil
+	}
 	out, err := t.run("list-sessions", "-F", "#{session_name}")
 	if err != nil {
 		if errors.Is(err, ErrNoServer) {
@@ -1227,6 +1258,24 @@ func (s *SessionSet) Names() []string {
 // ListSessionIDs returns a map of session name to session ID.
 // Session IDs are in the format "$N" where N is a number.
 func (t *Tmux) ListSessionIDs() (map[string]string, error) {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return nil, err
+		}
+		names, err := client.List()
+		if err != nil {
+			return nil, err
+		}
+		result := make(map[string]string, len(names))
+		for _, name := range names {
+			paneID, err := client.PaneID(name)
+			if err != nil {
+				return nil, err
+			}
+			result[name] = paneID
+		}
+		return result, nil
+	}
 	out, err := t.run("list-sessions", "-F", "#{session_name}:#{session_id}")
 	if err != nil {
 		if errors.Is(err, ErrNoServer) {
@@ -2092,6 +2141,19 @@ func (t *Tmux) DismissStartupDialogsBlind(session string) error {
 // GetPaneCommand returns the current command running in a pane.
 // Returns "bash", "zsh", "claude", "node", etc.
 func (t *Tmux) GetPaneCommand(session string) (string, error) {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return "", err
+		}
+		pane, err := client.Get(session)
+		if err != nil {
+			return "", err
+		}
+		if pane.Agent != "" {
+			return pane.Agent, nil
+		}
+		return "herdr-agent", nil
+	}
 	// Use display-message targeting the first window explicitly (:^) to avoid
 	// returning the active pane's command when a non-agent window is focused.
 	// Agent processes always run in the first window; without explicit targeting,
@@ -2485,6 +2547,12 @@ func (t *Tmux) CapturePane(session string, lines int) (string, error) {
 
 // CapturePaneAll captures all scrollback history.
 func (t *Tmux) CapturePaneAll(session string) (string, error) {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return "", err
+		}
+		return client.Read(session, 10000)
+	}
 	return t.run("capture-pane", "-p", "-t", session, "-S", "-")
 }
 
@@ -2507,7 +2575,7 @@ func (t *Tmux) AttachSession(session string) error {
 		if err != nil {
 			return err
 		}
-		return client.Focus(session)
+		return client.Attach(session)
 	}
 	_, err := t.run("attach-session", "-t", session)
 	return err
@@ -2526,6 +2594,15 @@ func (t *Tmux) SelectWindow(session string, index int) error {
 // Walks up the process parent chain and matches against tmux pane PIDs on
 // the configured socket.
 func (t *Tmux) ResolveCurrentSession() (string, error) {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return "", err
+		}
+		if session := strings.TrimSpace(os.Getenv("GT_SESSION")); session != "" {
+			return session, nil
+		}
+		return "", fmt.Errorf("GT_SESSION is not set in the current Herdr pane")
+	}
 	out, err := t.run("list-panes", "-a", "-F", "#{pane_pid} #{session_name}")
 	if err != nil {
 		return "", fmt.Errorf("listing panes: %w", err)
@@ -2624,18 +2701,39 @@ func (t *Tmux) GetEnvironment(session, key string) (string, error) {
 // SetGlobalEnvironment sets an environment variable in the tmux global environment.
 // Unlike SetEnvironment, this is not scoped to a session — it applies server-wide.
 func (t *Tmux) SetGlobalEnvironment(key, value string) error {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return os.Setenv(key, value)
+	}
 	_, err := t.run("set-environment", "-g", key, value)
 	return err
 }
 
 // UnsetGlobalEnvironment removes an environment variable from the tmux global environment.
 func (t *Tmux) UnsetGlobalEnvironment(key string) error {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return os.Unsetenv(key)
+	}
 	_, err := t.run("set-environment", "-g", "-u", key)
 	return err
 }
 
 // GetGlobalEnvironment gets an environment variable from the tmux global environment.
 func (t *Tmux) GetGlobalEnvironment(key string) (string, error) {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return "", err
+		}
+		if value, ok := os.LookupEnv(key); ok {
+			return value, nil
+		}
+		return "", fmt.Errorf("global environment variable %s not found", key)
+	}
 	out, err := t.run("show-environment", "-g", key)
 	if err != nil {
 		return "", err
@@ -2652,6 +2750,12 @@ func (t *Tmux) GetGlobalEnvironment(key string) (string, error) {
 
 // GetAllEnvironment returns all environment variables for a session.
 func (t *Tmux) GetAllEnvironment(session string) (map[string]string, error) {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return nil, err
+		}
+		return client.Environment(session)
+	}
 	out, err := t.run("show-environment", "-t", session)
 	if err != nil {
 		return nil, err
@@ -2676,6 +2780,12 @@ func (t *Tmux) GetAllEnvironment(session string) (map[string]string, error) {
 func (t *Tmux) RenameSession(oldName, newName string) error {
 	if err := validateSessionName(newName); err != nil {
 		return err
+	}
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return client.Rename(oldName, newName)
 	}
 	_, err := t.run("rename-session", "-t", oldName, newName)
 	return err
@@ -2764,6 +2874,9 @@ func (t *Tmux) IsAgentRunning(session string, expectedPaneCommands ...string) bo
 func (t *Tmux) IsRuntimeRunning(session string, processNames []string) bool {
 	if len(processNames) == 0 {
 		return false
+	}
+	if client, enabled, err := t.herdrBackend(); enabled {
+		return err == nil && client.IsAlive(session)
 	}
 
 	// ZFC: check declared pane identity set at session startup (gt-qmsx).

@@ -46,7 +46,7 @@ Refinery, merge, and cleanup.`,
 
 var clerkStartCmd = &cobra.Command{
 	Use:   "start",
-	Short: "Start Clerk in a Herdr-managed session",
+	Short: "Start Clerk using the Town session backend",
 	RunE: func(_ *cobra.Command, _ []string) error {
 		manager, err := getClerkManager()
 		if err != nil {
@@ -58,7 +58,7 @@ var clerkStartCmd = &cobra.Command{
 			}
 			return err
 		}
-		fmt.Printf("%s Clerk started in Herdr. Focus it with: gt clerk attach\n", style.Bold.Render("✓"))
+		fmt.Printf("%s Clerk started. Open it with: gt clerk attach\n", style.Bold.Render("✓"))
 		return nil
 	},
 }
@@ -105,7 +105,7 @@ var clerkStatusCmd = &cobra.Command{
 
 var clerkAttachCmd = &cobra.Command{
 	Use:   "attach",
-	Short: "Focus the Clerk tab in Herdr",
+	Short: "Attach to or focus the Clerk session",
 	RunE: func(_ *cobra.Command, _ []string) error {
 		manager, err := getClerkManager()
 		if err != nil {

@@ -3,6 +3,28 @@
 Clerk is a town-level, non-autonomous task coordinator. It shares Gas Town's
 native session lifecycle but cannot dispatch without a one-use human capability.
 
+## Installation
+
+Clerk is compiled into the normal Gas Town binary and provisioned as a native
+Town role. There is no role-specific installer.
+
+```bash
+# Build and install the gt binary from source.
+make install
+
+# New Town: provisions Mayor, Clerk, Deacon, and the other native defaults.
+gt install ~/gt
+
+# Existing Town: provisions or repairs Clerk without replacing clerk.json.
+cd ~/gt
+gt upgrade
+```
+
+The repository owns the Clerk implementation, role definition, prompt template,
+default policy, validation, and upgrade behavior. `<town>/clerk/clerk.json` is
+runtime data: it contains the local Town's routing and optional integration
+choices and is preserved across upgrades.
+
 ## Start
 
 Run from a Herdr-managed terminal:
@@ -42,6 +64,10 @@ The dispatch then follows the normal native path:
 6. Existing native completion and cleanup apply.
 
 Raw `gt sling` is rejected when `GT_ROLE=clerk`.
+
+Routing profiles are configured in `<town>/clerk/clerk.json`. A fresh Town uses
+portable `claude` and `codex` aliases; installations may bind profiles to exact
+model aliases without changing or rebuilding Gas Town.
 
 ## Herdr backend
 

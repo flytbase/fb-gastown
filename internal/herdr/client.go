@@ -5,12 +5,14 @@ package herdr
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,12 +21,16 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/steveyegge/gastown/internal/atomicfile"
+	"github.com/steveyegge/gastown/internal/config"
 )
 
 const (
-	BackendEnv   = "GT_SESSION_BACKEND"
+	BackendEnv   = config.SessionBackendEnv
 	BackendName  = "herdr"
 	registryFile = "herdr-sessions.json"
+
+	serverStartTimeout = 10 * time.Second
+	serverPollInterval = 100 * time.Millisecond
 )
 
 var (
@@ -39,11 +45,14 @@ type Runner interface {
 }
 
 type execRunner struct {
-	binary string
+	binary      string
+	prefix      []string
+	sessionName string
 }
 
 func (r execRunner) Run(args ...string) ([]byte, error) {
-	cmd := exec.Command(r.binary, args...)
+	fullArgs := append(append([]string(nil), r.prefix...), args...)
+	cmd := exec.Command(r.binary, fullArgs...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -52,9 +61,35 @@ func (r execRunner) Run(args ...string) ([]byte, error) {
 		if message == "" {
 			message = err.Error()
 		}
-		return nil, fmt.Errorf("herdr %s: %s", strings.Join(args, " "), message)
+		return nil, fmt.Errorf("herdr %s: %s", strings.Join(fullArgs, " "), message)
 	}
 	return out, nil
+}
+
+func (r execRunner) StartServer() error {
+	if r.sessionName == "" {
+		return fmt.Errorf("%w: managed Herdr session name is empty", ErrUnavailable)
+	}
+	args := []string{"--session", r.sessionName, "server"}
+	cmd := exec.Command(r.binary, args...)
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("starting Herdr session %q: %w", r.sessionName, err)
+	}
+	return cmd.Process.Release()
+}
+
+func (r execRunner) Attach() error {
+	if r.sessionName == "" {
+		return fmt.Errorf("%w: managed Herdr session name is empty", ErrUnavailable)
+	}
+	cmd := exec.Command(r.binary, "session", "attach", r.sessionName)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // Session binds a stable Gas Town session name to opaque Herdr identifiers.
@@ -69,7 +104,9 @@ type Session struct {
 }
 
 type registry struct {
-	Sessions map[string]Session `json:"sessions"`
+	BackendSession string             `json:"backend_session,omitempty"`
+	WorkspaceID    string             `json:"workspace_id,omitempty"`
+	Sessions       map[string]Session `json:"sessions"`
 }
 
 // Pane describes the subset of Herdr pane state needed by Gas Town.
@@ -86,8 +123,11 @@ type Client struct {
 	runner      Runner
 	townRoot    string
 	workspaceID string
+	sessionName string
+	autoStart   bool
 	now         func() time.Time
 	mu          sync.Mutex
+	workspaceMu sync.Mutex
 }
 
 // Enabled reports whether Herdr was selected as Gas Town's session backend.
@@ -95,22 +135,18 @@ func Enabled() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv(BackendEnv)), BackendName)
 }
 
-// NewFromEnvironment creates a production client. It fails closed unless the
-// caller is itself running under Herdr and has a workspace identifier.
+// NewFromEnvironment creates a production client for the resolved Town.
 func NewFromEnvironment() (*Client, error) {
 	return NewFromEnvironmentWithTownRoot(strings.TrimSpace(os.Getenv("GT_ROOT")))
 }
 
 // NewFromEnvironmentWithTownRoot creates a client for management commands
-// which have already resolved the Town from the current directory.
+// which have already resolved the Town from the current directory. Every call
+// targets a deterministic Town-specific named Herdr session, preventing a
+// command launched from an unrelated Herdr UI from splitting Town agents
+// across servers. The headless server starts lazily when the first agent
+// session is created.
 func NewFromEnvironmentWithTownRoot(townRoot string) (*Client, error) {
-	if os.Getenv("HERDR_ENV") != "1" {
-		return nil, fmt.Errorf("%w: HERDR_ENV=1 is required", ErrUnavailable)
-	}
-	workspaceID := strings.TrimSpace(os.Getenv("HERDR_WORKSPACE_ID"))
-	if workspaceID == "" {
-		return nil, fmt.Errorf("%w: HERDR_WORKSPACE_ID is required", ErrUnavailable)
-	}
 	townRoot = strings.TrimSpace(townRoot)
 	if townRoot == "" {
 		return nil, fmt.Errorf("%w: GT_ROOT is required", ErrUnavailable)
@@ -119,7 +155,20 @@ func NewFromEnvironmentWithTownRoot(townRoot string) (*Client, error) {
 	if binary == "" {
 		binary = "herdr"
 	}
-	return NewClient(execRunner{binary: binary}, townRoot, workspaceID), nil
+	resolvedBinary, err := exec.LookPath(binary)
+	if err != nil {
+		return nil, fmt.Errorf("%w: herdr executable not found: %v", ErrUnavailable, err)
+	}
+
+	sessionName := TownSessionName(townRoot)
+	client := NewClient(execRunner{
+		binary:      resolvedBinary,
+		prefix:      []string{"--session", sessionName},
+		sessionName: sessionName,
+	}, townRoot, "")
+	client.sessionName = sessionName
+	client.autoStart = true
+	return client, nil
 }
 
 // NewClient creates a client with an injected command runner.
@@ -130,6 +179,31 @@ func NewClient(runner Runner, townRoot, workspaceID string) *Client {
 		workspaceID: workspaceID,
 		now:         time.Now,
 	}
+}
+
+var invalidSessionNameChars = regexp.MustCompile(`[^a-z0-9_-]+`)
+
+// TownSessionName returns a stable Herdr named-session identifier for a Town.
+// The path hash prevents collisions between Towns with the same directory name.
+func TownSessionName(townRoot string) string {
+	canonical, err := filepath.EvalSymlinks(townRoot)
+	if err != nil {
+		canonical, err = filepath.Abs(townRoot)
+		if err != nil {
+			canonical = townRoot
+		}
+	}
+	base := strings.ToLower(filepath.Base(canonical))
+	base = invalidSessionNameChars.ReplaceAllString(base, "-")
+	base = strings.Trim(base, "-_")
+	if base == "" {
+		base = "town"
+	}
+	if len(base) > 40 {
+		base = base[:40]
+	}
+	hash := sha256.Sum256([]byte(canonical))
+	return fmt.Sprintf("gt-%s-%x", base, hash[:3])
 }
 
 func (c *Client) registryPath() string {
@@ -206,10 +280,136 @@ type paneGetEnvelope struct {
 	} `json:"result"`
 }
 
+type workspaceCreateEnvelope struct {
+	Result struct {
+		Workspace struct {
+			WorkspaceID string `json:"workspace_id"`
+		} `json:"workspace"`
+	} `json:"result"`
+}
+
+type serverStarter interface {
+	StartServer() error
+}
+
+type sessionAttacher interface {
+	Attach() error
+}
+
+func (c *Client) workspaceLockPath() string {
+	return c.registryPath() + ".workspace.lock"
+}
+
+// ensureWorkspace returns the workspace used by this Town. When gt is invoked
+// outside Herdr, it lazily starts a deterministic named Herdr server and
+// creates one durable Town workspace. A separate file lock prevents concurrent
+// `gt up` service starts from creating multiple workspaces.
+func (c *Client) ensureWorkspace() (string, error) {
+	c.workspaceMu.Lock()
+	defer c.workspaceMu.Unlock()
+
+	if c.workspaceID != "" {
+		return c.workspaceID, nil
+	}
+	if !c.autoStart {
+		return "", fmt.Errorf("%w: empty workspace id", ErrUnavailable)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(c.registryPath()), 0700); err != nil {
+		return "", fmt.Errorf("creating Herdr runtime directory: %w", err)
+	}
+	workspaceLock := flock.New(c.workspaceLockPath())
+	if err := workspaceLock.Lock(); err != nil {
+		return "", fmt.Errorf("locking Herdr workspace creation: %w", err)
+	}
+	defer func() { _ = workspaceLock.Unlock() }()
+
+	var storedWorkspace string
+	if err := c.withRegistry(func(state *registry) error {
+		storedWorkspace = state.WorkspaceID
+		return nil
+	}); err != nil {
+		return "", err
+	}
+	if err := c.ensureServer(); err != nil {
+		return "", err
+	}
+	if storedWorkspace != "" {
+		if _, err := c.runner.Run("workspace", "get", storedWorkspace); err == nil {
+			c.workspaceID = storedWorkspace
+			return storedWorkspace, nil
+		}
+	}
+
+	label := "Gas Town"
+	if base := filepath.Base(c.townRoot); base != "" && base != "." {
+		label += ": " + base
+	}
+	args := []string{
+		"workspace", "create",
+		"--cwd", c.townRoot,
+		"--label", label,
+		"--no-focus",
+		"--env", "GT_ROOT=" + c.townRoot,
+		"--env", "GT_TOWN_ROOT=" + c.townRoot,
+		"--env", BackendEnv + "=" + BackendName,
+	}
+	out, err := c.runner.Run(args...)
+	if err != nil {
+		return "", fmt.Errorf("creating Town Herdr workspace: %w", err)
+	}
+	var created workspaceCreateEnvelope
+	if err := json.Unmarshal(out, &created); err != nil {
+		return "", fmt.Errorf("decoding Herdr workspace creation: %w", err)
+	}
+	workspaceID := strings.TrimSpace(created.Result.Workspace.WorkspaceID)
+	if workspaceID == "" {
+		return "", fmt.Errorf("Herdr workspace creation returned empty workspace id")
+	}
+
+	if err := c.withRegistry(func(state *registry) error {
+		state.BackendSession = c.sessionName
+		state.WorkspaceID = workspaceID
+		// A replacement workspace cannot contain panes from the old mapping.
+		state.Sessions = make(map[string]Session)
+		return nil
+	}); err != nil {
+		return "", err
+	}
+	c.workspaceID = workspaceID
+	return workspaceID, nil
+}
+
+func (c *Client) ensureServer() error {
+	if _, err := c.runner.Run("workspace", "list"); err == nil {
+		return nil
+	}
+	starter, ok := c.runner.(serverStarter)
+	if !ok {
+		return fmt.Errorf("%w: runner cannot start a Herdr server", ErrUnavailable)
+	}
+	if err := starter.StartServer(); err != nil {
+		return err
+	}
+
+	deadline := time.Now().Add(serverStartTimeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if _, err := c.runner.Run("workspace", "list"); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		time.Sleep(serverPollInterval)
+	}
+	return fmt.Errorf("waiting for Town Herdr server: %w", lastErr)
+}
+
 // Create creates a background Herdr tab and starts the session command.
 func (c *Client) Create(name, workDir, command string, env map[string]string) error {
-	if c.workspaceID == "" {
-		return fmt.Errorf("%w: empty workspace id", ErrUnavailable)
+	workspaceID, err := c.ensureWorkspace()
+	if err != nil {
+		return err
 	}
 	if _, err := c.lookup(name); err == nil {
 		return fmt.Errorf("Herdr session already exists: %s", name)
@@ -217,7 +417,7 @@ func (c *Client) Create(name, workDir, command string, env map[string]string) er
 		return err
 	}
 
-	args := []string{"tab", "create", "--workspace", c.workspaceID, "--cwd", workDir, "--label", name, "--no-focus"}
+	args := []string{"tab", "create", "--workspace", workspaceID, "--cwd", workDir, "--label", name, "--no-focus"}
 	keys := make([]string, 0, len(env))
 	for key := range env {
 		keys = append(keys, key)
@@ -439,6 +639,24 @@ func (c *Client) SetEnvironment(name, key, value string) error {
 	})
 }
 
+// Rename changes the stable Gas Town name for a mapped Herdr tab. Herdr's
+// opaque tab and pane identifiers remain unchanged.
+func (c *Client) Rename(oldName, newName string) error {
+	return c.withRegistry(func(state *registry) error {
+		session, ok := state.Sessions[oldName]
+		if !ok {
+			return fmt.Errorf("%w: %s", ErrSessionNotFound, oldName)
+		}
+		if _, exists := state.Sessions[newName]; exists {
+			return fmt.Errorf("Herdr session already exists: %s", newName)
+		}
+		delete(state.Sessions, oldName)
+		session.Name = newName
+		state.Sessions[newName] = session
+		return nil
+	})
+}
+
 // List returns all mapped session names in stable order.
 func (c *Client) List() ([]string, error) {
 	var names []string
@@ -460,6 +678,32 @@ func (c *Client) Focus(name string) error {
 		return err
 	}
 	_, err = c.runner.Run("tab", "focus", session.TabID)
+	return err
+}
+
+// Attach focuses a logical session and, when gt is running outside Herdr,
+// attaches the terminal to the Town's named Herdr session.
+func (c *Client) Attach(name string) error {
+	if err := c.Focus(name); err != nil {
+		return err
+	}
+	if os.Getenv("HERDR_ENV") == "1" {
+		return nil
+	}
+	attacher, ok := c.runner.(sessionAttacher)
+	if !ok {
+		return fmt.Errorf("%w: runner cannot attach a Herdr session", ErrUnavailable)
+	}
+	return attacher.Attach()
+}
+
+// StopServer stops the Town-owned named Herdr server. A client that was
+// created inside an existing Herdr workspace does not own that server.
+func (c *Client) StopServer() error {
+	if c.sessionName == "" {
+		return nil
+	}
+	_, err := c.runner.Run("server", "stop")
 	return err
 }
 

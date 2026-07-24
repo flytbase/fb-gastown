@@ -150,8 +150,8 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 
 	// The selected terminal transport must propagate to every native service
 	// and Polecat started by this agent.
-	if backend := strings.TrimSpace(os.Getenv("GT_SESSION_BACKEND")); backend != "" {
-		env["GT_SESSION_BACKEND"] = backend
+	if backend := strings.TrimSpace(os.Getenv(SessionBackendEnv)); backend != "" {
+		env[SessionBackendEnv] = backend
 	}
 
 	// Only set GT_ROOT if provided

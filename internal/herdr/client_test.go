@@ -2,9 +2,11 @@ package herdr
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -26,6 +28,16 @@ func (f *fakeRunner) Run(args ...string) ([]byte, error) {
 		err = f.errs[index]
 	}
 	return response, err
+}
+
+type managedFakeRunner struct {
+	fakeRunner
+	starts int
+}
+
+func (f *managedFakeRunner) StartServer() error {
+	f.starts++
+	return nil
 }
 
 func TestCreateUsesOpaqueIDsAndPersistsMapping(t *testing.T) {
@@ -114,5 +126,79 @@ func TestRegistryPermissions(t *testing.T) {
 	}
 	if state.Sessions["session"].TabID != "tab-1" {
 		t.Fatalf("stored session = %#v", state.Sessions["session"])
+	}
+}
+
+func TestManagedClientStartsServerAndCreatesTownWorkspace(t *testing.T) {
+	root := t.TempDir()
+	runner := &managedFakeRunner{fakeRunner: fakeRunner{
+		responses: [][]byte{
+			nil,
+			[]byte(`{"result":{"workspaces":[]}}`),
+			[]byte(`{"result":{"workspace":{"workspace_id":"workspace-town"}}}`),
+			[]byte(`{"result":{"tab":{"tab_id":"tab-1"},"root_pane":{"pane_id":"pane-1"}}}`),
+			nil,
+		},
+		errs: []error{
+			errors.New("server unavailable"),
+			nil,
+			nil,
+			nil,
+			nil,
+		},
+	}}
+	client := NewClient(runner, root, "")
+	client.sessionName = "gt-test-123456"
+	client.autoStart = true
+
+	if err := client.Create("hq-mayor", root, "claude", nil); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if runner.starts != 1 {
+		t.Fatalf("StartServer() calls = %d, want 1", runner.starts)
+	}
+	wantWorkspaceCreate := []string{
+		"workspace", "create",
+		"--cwd", root,
+		"--label", "Gas Town: " + filepath.Base(root),
+		"--no-focus",
+		"--env", "GT_ROOT=" + root,
+		"--env", "GT_TOWN_ROOT=" + root,
+		"--env", "GT_SESSION_BACKEND=herdr",
+	}
+	if !reflect.DeepEqual(runner.calls[2], wantWorkspaceCreate) {
+		t.Fatalf("workspace create args = %#v, want %#v", runner.calls[2], wantWorkspaceCreate)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, ".runtime", registryFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state registry
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.BackendSession != "gt-test-123456" || state.WorkspaceID != "workspace-town" {
+		t.Fatalf("managed registry = %#v", state)
+	}
+}
+
+func TestTownSessionNameIsStableAndPathScoped(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "My Town")
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	first := TownSessionName(root)
+	second := TownSessionName(root)
+	if first != second {
+		t.Fatalf("TownSessionName() is not stable: %q != %q", first, second)
+	}
+	if !strings.HasPrefix(first, "gt-my-town-") {
+		t.Fatalf("TownSessionName() = %q, want sanitized Town prefix", first)
+	}
+
+	otherRoot := filepath.Join(t.TempDir(), "My Town")
+	if first == TownSessionName(otherRoot) {
+		t.Fatalf("same basename produced colliding session name %q", first)
 	}
 }

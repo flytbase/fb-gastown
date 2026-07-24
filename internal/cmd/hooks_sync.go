@@ -252,62 +252,16 @@ const (
 // syncTarget syncs a single target's .claude/settings.json.
 // Uses MarshalSettings/UnmarshalSettings to preserve unknown fields.
 func syncTarget(target hooks.Target, dryRun bool) (syncResult, error) {
-	// Compute expected hooks for this target
-	expected, err := hooks.ComputeExpected(target.Key)
+	result, err := hooks.SyncManagedTarget(target, dryRun)
 	if err != nil {
-		return 0, fmt.Errorf("computing expected config: %w", err)
+		return 0, err
 	}
-
-	// Load existing settings (returns zero-value if file doesn't exist)
-	current, err := hooks.LoadSettings(target.Path)
-	if err != nil {
-		return 0, fmt.Errorf("loading current settings: %w", err)
-	}
-
-	// Check if the file exists
-	_, statErr := os.Stat(target.Path)
-	fileExists := statErr == nil
-
-	// Compare hooks sections
-	if fileExists && hooks.HooksEqual(expected, &current.Hooks) {
+	switch result {
+	case hooks.ManagedSyncUpdated:
+		return syncUpdated, nil
+	case hooks.ManagedSyncCreated:
+		return syncCreated, nil
+	default:
 		return syncUnchanged, nil
 	}
-
-	if dryRun {
-		if fileExists {
-			return syncUpdated, nil
-		}
-		return syncCreated, nil
-	}
-
-	// Update hooks section, preserving all other fields (including unknown ones)
-	current.Hooks = *expected
-
-	// Ensure enabledPlugins map exists with beads disabled (Gas Town standard)
-	if current.EnabledPlugins == nil {
-		current.EnabledPlugins = make(map[string]bool)
-	}
-	current.EnabledPlugins["beads@beads-marketplace"] = false
-
-	// Create .claude directory if needed
-	claudeDir := filepath.Dir(target.Path)
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		return 0, fmt.Errorf("creating .claude directory: %w", err)
-	}
-
-	// Write settings.json using MarshalSettings to preserve unknown fields
-	data, err := hooks.MarshalSettings(current)
-	if err != nil {
-		return 0, fmt.Errorf("marshaling settings: %w", err)
-	}
-	data = append(data, '\n')
-
-	if err := os.WriteFile(target.Path, data, 0644); err != nil {
-		return 0, fmt.Errorf("writing settings: %w", err)
-	}
-
-	if fileExists {
-		return syncUpdated, nil
-	}
-	return syncCreated, nil
 }

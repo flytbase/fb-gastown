@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -301,6 +302,35 @@ func TestEnsureSettingsForRole_ClaudeUsesSettingsDir(t *testing.T) {
 	}
 	if _, err := os.Stat(workDir + "/.claude/settings.json"); err == nil {
 		t.Error("Claude settings should NOT be in workDir when dirs differ")
+	}
+}
+
+func TestEnsureSettingsForRole_ClerkPreservesNativeGuards(t *testing.T) {
+	settingsDir := t.TempDir()
+	t.Setenv("GT_HOME", t.TempDir())
+
+	rc := &config.RuntimeConfig{
+		Hooks: &config.RuntimeHooksConfig{
+			Provider:     "claude",
+			Dir:          ".claude",
+			SettingsFile: "settings.json",
+		},
+	}
+
+	for i := 0; i < 2; i++ {
+		if err := EnsureSettingsForRole(settingsDir, settingsDir, "clerk", rc); err != nil {
+			t.Fatalf("EnsureSettingsForRole() pass %d: %v", i+1, err)
+		}
+	}
+
+	data, err := os.ReadFile(settingsDir + "/.claude/settings.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{"mcp__clickup__.*", "Bash(tmux*)", "gt clerk request/authorize/sling"} {
+		if !strings.Contains(string(data), marker) {
+			t.Errorf("Clerk settings missing native guard %q", marker)
+		}
 	}
 }
 

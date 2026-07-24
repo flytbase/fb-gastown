@@ -1571,6 +1571,7 @@ func TestParseAgentBeadID(t *testing.T) {
 	}{
 		// Town-level agents
 		{"gt-mayor", "", "mayor", "", true},
+		{"gt-clerk", "", "clerk", "", true},
 		{"gt-deacon", "", "deacon", "", true},
 		// Rig-level singletons
 		{"gt-gastown-witness", "gastown", "witness", "", true},
@@ -1603,6 +1604,7 @@ func TestParseAgentBeadID(t *testing.T) {
 		{"bd-beads-witness", "beads", "witness", "", true},            // bd prefix rig-level singleton
 		{"bd-beads-polecat-pearl", "beads", "polecat", "pearl", true}, // bd prefix rig-level named
 		{"hq-mayor", "", "mayor", "", true},                           // hq prefix town-level
+		{"hq-clerk", "", "clerk", "", true},                           // hq prefix town-level
 		// Truly invalid patterns
 		{"x-mayor", "", "", "", false},    // Prefix too short (1 char)
 		{"abcd-mayor", "", "", "", false}, // Prefix too long (4 chars)
@@ -1636,6 +1638,7 @@ func TestIsAgentSessionBead(t *testing.T) {
 	}{
 		// Agent session beads with gt- prefix (should return true)
 		{"gt-mayor", true},
+		{"gt-clerk", true},
 		{"gt-deacon", true},
 		{"gt-gastown-witness", true},
 		{"gt-gastown-refinery", true},
@@ -1643,6 +1646,7 @@ func TestIsAgentSessionBead(t *testing.T) {
 		{"gt-gastown-polecat-capable", true},
 		// Agent session beads with bd- prefix (should return true)
 		{"bd-mayor", true},
+		{"hq-clerk", true},
 		{"bd-deacon", true},
 		{"bd-beads-witness", true},
 		{"bd-beads-refinery", true},

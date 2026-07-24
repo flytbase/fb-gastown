@@ -16,6 +16,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/clerk"
 	"github.com/steveyegge/gastown/internal/cli"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
@@ -33,18 +34,19 @@ import (
 )
 
 var (
-	installForce      bool
-	installName       string
-	installOwner      string
-	installPublicName string
-	installNoBeads    bool
-	installGit        bool
-	installGitHub     string
-	installPublic     bool
-	installShell      bool
-	installWrappers   bool
-	installSupervisor bool
-	installDoltPort   int
+	installForce          bool
+	installName           string
+	installOwner          string
+	installPublicName     string
+	installNoBeads        bool
+	installGit            bool
+	installGitHub         string
+	installPublic         bool
+	installShell          bool
+	installWrappers       bool
+	installSupervisor     bool
+	installDoltPort       int
+	installSessionBackend string
 )
 
 var installCmd = &cobra.Command{
@@ -57,6 +59,7 @@ The HQ (headquarters) is the top-level directory where Gas Town is installed -
 the root of your workspace where all rigs and agents live. It contains:
   - CLAUDE.md            Mayor role context (Mayor runs from HQ root)
   - mayor/               Mayor config, state, and rig registry
+  - clerk/               Supervised task coordination and dispatch policy
   - .beads/              Town-level beads DB (hq-* prefix for mayor mail)
 
 If path is omitted, uses the current directory.
@@ -72,6 +75,7 @@ Examples:
   gt install ~/gt --github=user/repo           # Create private GitHub repo (default)
   gt install ~/gt --github=user/repo --public  # Create public GitHub repo
   gt install ~/gt --shell                      # Install shell integration (sets GT_TOWN_ROOT/GT_RIG)
+  gt install ~/gt --session-backend herdr      # Use Herdr instead of tmux for all agent sessions
   gt install ~/gt --supervisor                 # Configure launchd/systemd for daemon auto-restart`,
 	Args:         cobra.MaximumNArgs(1),
 	RunE:         runInstall,
@@ -91,6 +95,7 @@ func init() {
 	installCmd.Flags().BoolVar(&installWrappers, "wrappers", false, "Install gt-codex/gt-gemini/gt-opencode wrapper scripts to ~/bin/")
 	installCmd.Flags().BoolVar(&installSupervisor, "supervisor", false, "Configure launchd/systemd for daemon auto-restart")
 	installCmd.Flags().IntVar(&installDoltPort, "dolt-port", 0, "Dolt SQL server port (default 3307; set when another instance owns the default port)")
+	installCmd.Flags().StringVar(&installSessionBackend, "session-backend", "", "Town-wide session backend: tmux (default) or herdr")
 	rootCmd.AddCommand(installCmd)
 }
 
@@ -119,6 +124,22 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	townName := installName
 	if townName == "" {
 		townName = filepath.Base(absPath)
+	}
+
+	// Validate an explicitly selected terminal transport before mutating the
+	// target directory. Existing Towns preserve their persisted choice when
+	// --session-backend is omitted.
+	requestedBackend := ""
+	if cmd.Flags().Changed("session-backend") {
+		requestedBackend, err = config.ParseSessionBackend(installSessionBackend)
+		if err != nil {
+			return err
+		}
+		if requestedBackend == config.SessionBackendHerdr {
+			if _, err := exec.LookPath("herdr"); err != nil {
+				return fmt.Errorf("Herdr session backend selected but herdr is not installed or not on PATH")
+			}
+		}
 	}
 
 	// Check if already a workspace
@@ -248,6 +269,31 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		fmt.Printf("   • mayor/town.json already exists, preserving\n")
 	}
 
+	// Persist the Town-wide session transport in behavioral settings. This is
+	// the single source of truth used by every role; tmux remains the backwards-
+	// compatible default for existing settings that omit the field.
+	settingsPath := config.TownSettingsPath(absPath)
+	townSettings, err := config.LoadOrCreateTownSettings(settingsPath)
+	if err != nil {
+		return fmt.Errorf("loading Town settings: %w", err)
+	}
+	settingsChanged := false
+	if requestedBackend != "" {
+		if townSettings.SessionBackend != requestedBackend {
+			townSettings.SessionBackend = requestedBackend
+			settingsChanged = true
+		}
+	} else if townSettings.SessionBackend == "" {
+		townSettings.SessionBackend = config.SessionBackendTmux
+		settingsChanged = true
+	}
+	if _, statErr := os.Stat(settingsPath); os.IsNotExist(statErr) || settingsChanged {
+		if err := config.SaveTownSettings(settingsPath, townSettings); err != nil {
+			return fmt.Errorf("saving Town session backend: %w", err)
+		}
+	}
+	fmt.Printf("   ✓ Session backend: %s\n", config.SessionBackendFromSettings(townSettings))
+
 	// Create rigs.json in mayor/ (only if it doesn't already exist).
 	// Re-running install must NOT clobber existing rig registrations.
 	rigsPath := filepath.Join(mayorDir, "rigs.json")
@@ -309,6 +355,22 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		} else {
 			fmt.Printf("   ✓ Created deacon/.claude/settings.json\n")
 		}
+	}
+
+	// Provision the native Clerk from repository-owned defaults. Existing
+	// per-Town configuration is validated and preserved.
+	clerkResult, err := clerk.Provision(absPath, false)
+	if err != nil {
+		return fmt.Errorf("provisioning Clerk: %w", err)
+	}
+	clerkDir := filepath.Join(absPath, "clerk")
+	clerkRuntimeConfig := config.ResolveRoleAgentConfig(constants.RoleClerk, absPath, clerkDir)
+	if err := runtime.EnsureSettingsForRole(clerkDir, clerkDir, constants.RoleClerk, clerkRuntimeConfig); err != nil {
+		fmt.Printf("   %s Could not create Clerk settings: %v\n", style.Dim.Render("⚠"), err)
+	} else if clerkResult.Changed() > 0 {
+		fmt.Printf("   ✓ Created clerk/ with native supervised policy and runtime settings\n")
+	} else {
+		fmt.Printf("   ✓ Preserved existing clerk/ policy and refreshed runtime settings\n")
 	}
 
 	// Create boot directory (deacon/dogs/boot/) for Boot watchdog.
@@ -799,7 +861,7 @@ func ensureCustomTypes(beadsPath string) error {
 
 // initTownAgentBeads creates town-level agent beads using hq- prefix.
 // This creates:
-//   - hq-mayor, hq-deacon (agent beads for town-level agents)
+//   - hq-mayor, hq-clerk, hq-deacon (agent beads for town-level agents)
 //
 // These beads are stored in town beads (~/gt/.beads/) and are shared across all rigs.
 // Rig-level agent beads (witness, refinery) are created by gt rig add in rig beads.
@@ -831,6 +893,11 @@ func initTownAgentBeads(townPath string) error {
 			id:       beads.MayorBeadIDTown(),
 			roleType: "mayor",
 			title:    "Mayor - global coordinator, handles cross-rig communication and escalations.",
+		},
+		{
+			id:       beads.ClerkBeadIDTown(),
+			roleType: constants.RoleClerk,
+			title:    "Clerk - supervised task coordinator and authorized native Polecat dispatcher.",
 		},
 		{
 			id:       beads.DeaconBeadIDTown(),

@@ -8,15 +8,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
-	"runtime"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/clerk"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/crew"
@@ -130,6 +131,7 @@ infrastructure agents are running:
   • Daemon     - Go background process that pokes agents
   • Deacon     - Health orchestrator (monitors Mayor/Witnesses)
   • Mayor      - Global work coordinator
+  • Clerk      - Human-supervised task coordinator
   • Witnesses  - Per-rig polecat managers
   • Refineries - Per-rig merge queue processors
 
@@ -195,10 +197,10 @@ func runUp(cmd *cobra.Command, args []string) error {
 		fmt.Printf("%s DND was enabled; reset to normal for current agent\n", style.SuccessPrefix)
 	}
 
-	// Start daemon, deacon, mayor, and rig prefetch in parallel
+	// Start daemon, deacon, mayor, Clerk, and rig prefetch in parallel.
 	var daemonErr error
 	var daemonPID int
-	var deaconResult, mayorResult agentStartResult
+	var deaconResult, mayorResult, clerkResult agentStartResult
 	var prefetchedRigs map[string]*rig.Rig
 	var rigErrors map[string]error
 	var doltOK bool
@@ -206,7 +208,7 @@ func runUp(cmd *cobra.Command, args []string) error {
 	var doltSkipped bool
 
 	var startupWg sync.WaitGroup
-	startupWg.Add(5)
+	startupWg.Add(6)
 
 	// 0. Dolt server (if configured)
 	go func() {
@@ -281,6 +283,21 @@ func runUp(cmd *cobra.Command, args []string) error {
 		prefetchedRigs, rigErrors = prefetchRigs(rigs)
 	}()
 
+	// 5. Clerk (native, supervised head)
+	go func() {
+		defer startupWg.Done()
+		clerkMgr := clerk.NewManager(townRoot)
+		if err := clerkMgr.Start(""); err != nil {
+			if errors.Is(err, clerk.ErrAlreadyRunning) {
+				clerkResult = agentStartResult{name: "Clerk", ok: true, detail: clerkMgr.SessionName()}
+			} else {
+				clerkResult = agentStartResult{name: "Clerk", ok: false, detail: err.Error()}
+			}
+		} else {
+			clerkResult = agentStartResult{name: "Clerk", ok: true, detail: clerkMgr.SessionName()}
+		}
+	}()
+
 	startupWg.Wait()
 
 	// Ensure beads metadata points to the Dolt server
@@ -311,6 +328,10 @@ func runUp(cmd *cobra.Command, args []string) error {
 	}
 	services = append(services, ServiceStatus{Name: mayorResult.name, Type: constants.RoleMayor, OK: mayorResult.ok, Detail: mayorResult.detail})
 	if !mayorResult.ok {
+		allOK = false
+	}
+	services = append(services, ServiceStatus{Name: clerkResult.name, Type: constants.RoleClerk, OK: clerkResult.ok, Detail: clerkResult.detail})
+	if !clerkResult.ok {
 		allOK = false
 	}
 
@@ -1065,4 +1086,3 @@ func recoverOrphanedBeads(townRoot string, rigs []string, prefetchedRigs map[str
 
 	return services
 }
-

@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/herdr"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
@@ -19,6 +20,9 @@ import (
 // control, and passes -u for UTF-8 support regardless of locale settings.
 // See: https://github.com/steveyegge/gastown/issues/1219
 func attachToTmuxSession(sessionID string) error {
+	if herdr.Enabled() {
+		return tmux.NewTmux().AttachSession(sessionID)
+	}
 	tmuxPath, err := exec.LookPath("tmux")
 	if err != nil {
 		return fmt.Errorf("tmux not found: %w", err)

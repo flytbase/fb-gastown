@@ -18,7 +18,7 @@ func TestAgentBeadsExistCheck_NoRoutes(t *testing.T) {
 
 	result := check.Run(ctx)
 
-	// With no routes, only global agents (deacon, mayor) are checked
+	// With no routes, only global agents (mayor, clerk, deacon) are checked
 	// They won't exist without Dolt, so we expect error
 	t.Logf("Result: status=%v, message=%s", result.Status, result.Message)
 	if result.Status == StatusOK {
@@ -44,7 +44,7 @@ func TestAgentBeadsExistCheck_NoRigs(t *testing.T) {
 
 	result := check.Run(ctx)
 
-	// With empty routes, only global agents (deacon, mayor) are checked
+	// With empty routes, only global agents (mayor, clerk, deacon) are checked
 	// They won't exist without Dolt, so we expect error or warning
 	t.Logf("Result: status=%v, message=%s", result.Status, result.Message)
 }
@@ -282,6 +282,9 @@ esac
 	}
 	if !strings.Contains(log, "create gs-gastown-witness") {
 		t.Fatalf("expected scoped Fix() to create gastown witness bead, got log: %q", log)
+	}
+	if !strings.Contains(log, "create hq-clerk") {
+		t.Fatalf("expected Fix() to create native Clerk agent bead, got log: %q", log)
 	}
 }
 

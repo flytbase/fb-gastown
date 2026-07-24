@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/herdr"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
@@ -16,6 +17,9 @@ import (
 // If already inside the multiplexer, uses switch-client instead of attach-session.
 // Uses os/exec.Command with stdio passthrough since syscall.Exec is Unix-only.
 func attachToTmuxSession(sessionID string) error {
+	if herdr.Enabled() {
+		return tmux.NewTmux().AttachSession(sessionID)
+	}
 	tmuxPath, err := exec.LookPath("tmux")
 	if err != nil {
 		return fmt.Errorf("tmux not found: %w", err)

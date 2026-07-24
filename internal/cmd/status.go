@@ -21,6 +21,7 @@ import (
 	"github.com/steveyegge/gastown/internal/daemon"
 	"github.com/steveyegge/gastown/internal/doltserver"
 	"github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/herdr"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/mayor"
 	"github.com/steveyegge/gastown/internal/rig"
@@ -63,17 +64,19 @@ func init() {
 
 // TownStatus represents the overall status of the workspace.
 type TownStatus struct {
-	Name     string         `json:"name"`
-	Location string         `json:"location"`
-	Overseer *OverseerInfo  `json:"overseer,omitempty"` // Human operator
-	DND      *DNDInfo       `json:"dnd,omitempty"`      // Current agent DND status
-	Daemon   *ServiceInfo   `json:"daemon,omitempty"`   // Daemon status
-	Dolt     *DoltInfo      `json:"dolt,omitempty"`     // Dolt server status
-	Tmux     *TmuxInfo      `json:"tmux,omitempty"`     // Tmux server status
-	ACP      *ServiceInfo   `json:"acp,omitempty"`      // ACP mayor status
-	Agents   []AgentRuntime `json:"agents"`             // Global agents (Mayor, Deacon)
-	Rigs     []RigStatus    `json:"rigs"`
-	Summary  StatusSum      `json:"summary"`
+	Name           string         `json:"name"`
+	Location       string         `json:"location"`
+	SessionBackend string         `json:"session_backend"`
+	Overseer       *OverseerInfo  `json:"overseer,omitempty"` // Human operator
+	DND            *DNDInfo       `json:"dnd,omitempty"`      // Current agent DND status
+	Daemon         *ServiceInfo   `json:"daemon,omitempty"`   // Daemon status
+	Dolt           *DoltInfo      `json:"dolt,omitempty"`     // Dolt server status
+	Tmux           *TmuxInfo      `json:"tmux,omitempty"`     // Tmux server status
+	Herdr          *HerdrInfo     `json:"herdr,omitempty"`    // Herdr server status
+	ACP            *ServiceInfo   `json:"acp,omitempty"`      // ACP mayor status
+	Agents         []AgentRuntime `json:"agents"`             // Global agents
+	Rigs           []RigStatus    `json:"rigs"`
+	Summary        StatusSum      `json:"summary"`
 }
 
 // ServiceInfo represents a background service status.
@@ -102,6 +105,13 @@ type TmuxInfo struct {
 	SessionCount int    `json:"session_count"`         // Number of sessions
 }
 
+// HerdrInfo represents the Town-owned named Herdr server.
+type HerdrInfo struct {
+	SessionName  string `json:"session_name"`
+	Running      bool   `json:"running"`
+	SessionCount int    `json:"session_count"`
+}
+
 // OverseerInfo represents the human operator's identity and status.
 type OverseerInfo struct {
 	Name       string `json:"name"`
@@ -120,15 +130,15 @@ type DNDInfo struct {
 
 // AgentRuntime represents the runtime state of an agent.
 type AgentRuntime struct {
-	Name         string `json:"name"`                    // Display name (e.g., "mayor", "witness")
-	Address      string `json:"address"`                 // Full address (e.g., "greenplace/witness")
-	Session      string `json:"session"`                 // tmux session name
-	Role         string `json:"role"`                    // Role type
-	Running      bool   `json:"running"`                 // Is tmux session running?
-	ACP          bool   `json:"acp"`                     // Is ACP session active?
-	HasWork      bool   `json:"has_work"`                // Has pinned work?
-	WorkTitle    string `json:"work_title,omitempty"`    // Title of pinned work
-	HookBead     string `json:"hook_bead,omitempty"`     // Pinned bead ID from agent bead
+	Name              string `json:"name"`                         // Display name (e.g., "mayor", "witness")
+	Address           string `json:"address"`                      // Full address (e.g., "greenplace/witness")
+	Session           string `json:"session"`                      // tmux session name
+	Role              string `json:"role"`                         // Role type
+	Running           bool   `json:"running"`                      // Is tmux session running?
+	ACP               bool   `json:"acp"`                          // Is ACP session active?
+	HasWork           bool   `json:"has_work"`                     // Has pinned work?
+	WorkTitle         string `json:"work_title,omitempty"`         // Title of pinned work
+	HookBead          string `json:"hook_bead,omitempty"`          // Pinned bead ID from agent bead
 	State             string `json:"state,omitempty"`              // Agent state from agent bead
 	NotificationLevel string `json:"notification_level,omitempty"` // Notification level (verbose, normal, muted)
 	UnreadMail        int    `json:"unread_mail"`                  // Number of unread messages
@@ -783,11 +793,12 @@ func gatherStatus() (TownStatus, error) {
 
 	// Build status - parallel fetch global agents and rigs
 	status := TownStatus{
-		Name:     townConfig.Name,
-		Location: townRoot,
-		Overseer: overseerInfo,
-		DND:      detectCurrentDNDStatus(townRoot),
-		Rigs:     make([]RigStatus, len(rigs)),
+		Name:           townConfig.Name,
+		Location:       townRoot,
+		SessionBackend: config.SessionBackendFromSettings(townSettings),
+		Overseer:       overseerInfo,
+		DND:            detectCurrentDNDStatus(townRoot),
+		Rigs:           make([]RigStatus, len(rigs)),
 	}
 
 	// Daemon status
@@ -826,24 +837,31 @@ func gatherStatus() (TownStatus, error) {
 		status.Dolt = doltInfo
 	}
 
-	// Tmux status
-	socket := tmux.GetDefaultSocket()
-	socketLabel := "default"
-	if socket != "" {
-		socketLabel = socket
+	if status.SessionBackend == config.SessionBackendHerdr {
+		status.Herdr = &HerdrInfo{
+			SessionName:  herdr.TownSessionName(townRoot),
+			Running:      len(allSessions) > 0,
+			SessionCount: len(allSessions),
+		}
+	} else {
+		socket := tmux.GetDefaultSocket()
+		socketLabel := "default"
+		if socket != "" {
+			socketLabel = socket
+		}
+		tmuxInfo := &TmuxInfo{
+			Socket:       socketLabel,
+			SessionCount: len(allSessions),
+			Running:      len(allSessions) > 0,
+		}
+		// Resolve socket path: /tmp/tmux-<UID>/<socket>
+		tmuxInfo.SocketPath = filepath.Join(tmux.SocketDir(), socketLabel)
+		if _, err := os.Stat(tmuxInfo.SocketPath); err == nil {
+			tmuxInfo.Running = true
+			tmuxInfo.PID = tmux.NewTmux().ServerPID()
+		}
+		status.Tmux = tmuxInfo
 	}
-	tmuxInfo := &TmuxInfo{
-		Socket:       socketLabel,
-		SessionCount: len(allSessions),
-		Running:      len(allSessions) > 0,
-	}
-	// Resolve socket path: /tmp/tmux-<UID>/<socket>
-	tmuxInfo.SocketPath = filepath.Join(tmux.SocketDir(), socketLabel)
-	if _, err := os.Stat(tmuxInfo.SocketPath); err == nil {
-		tmuxInfo.Running = true
-		tmuxInfo.PID = tmux.NewTmux().ServerPID()
-	}
-	status.Tmux = tmuxInfo
 
 	// ACP status
 	if mayor.IsACPActive(townRoot) {
@@ -1015,7 +1033,7 @@ func outputStatusText(w io.Writer, status TownStatus) error {
 	}
 
 	// Infrastructure services
-	if status.Daemon != nil || status.Dolt != nil || status.Tmux != nil {
+	if status.Daemon != nil || status.Dolt != nil || status.Tmux != nil || status.Herdr != nil {
 		fmt.Fprintf(w, "%s ", style.Bold.Render("Services:"))
 		var parts []string
 		if status.Daemon != nil {
@@ -1047,6 +1065,13 @@ func outputStatusText(w io.Writer, status TownStatus) error {
 				parts = append(parts, fmt.Sprintf("tmux %s", style.Dim.Render(fmt.Sprintf("(-L %s, no server)", status.Tmux.Socket))))
 			}
 		}
+		if status.Herdr != nil {
+			if status.Herdr.Running {
+				parts = append(parts, fmt.Sprintf("herdr %s", style.Dim.Render(fmt.Sprintf("(%s, %d sessions)", status.Herdr.SessionName, status.Herdr.SessionCount))))
+			} else {
+				parts = append(parts, fmt.Sprintf("herdr %s", style.Dim.Render(fmt.Sprintf("(%s, no server)", status.Herdr.SessionName))))
+			}
+		}
 		if status.ACP != nil {
 			if status.ACP.Running {
 				parts = append(parts, fmt.Sprintf("acp %s", style.Dim.Render(fmt.Sprintf("(PID %d)", status.ACP.PID))))
@@ -1061,6 +1086,7 @@ func outputStatusText(w io.Writer, status TownStatus) error {
 	// Role icons - uses centralized emojis from constants package
 	roleIcons := map[string]string{
 		constants.RoleMayor:    constants.EmojiMayor,
+		constants.RoleClerk:    constants.EmojiClerk,
 		constants.RoleDeacon:   constants.EmojiDeacon,
 		constants.RoleWitness:  constants.EmojiWitness,
 		constants.RoleRefinery: constants.EmojiRefinery,
@@ -1071,7 +1097,7 @@ func outputStatusText(w io.Writer, status TownStatus) error {
 		"health-check": constants.EmojiDeacon,
 	}
 
-	// Global Agents (Mayor, Deacon)
+	// Global Agents (Clerk, Mayor, Deacon)
 	for _, agent := range status.Agents {
 		icon := roleIcons[agent.Role]
 		if icon == "" {
@@ -1589,7 +1615,7 @@ func resolveHookFromMap(allHandoffs map[string]*beads.Issue, role, agentAddress,
 	return hook
 }
 
-// discoverGlobalAgents checks runtime state for town-level agents (Mayor, Deacon).
+// discoverGlobalAgents checks runtime state for town-level agents.
 // Uses parallel fetching for performance. If skipMail is true, mail lookups are skipped.
 // allSessions is a preloaded map of tmux sessions for O(1) lookup.
 // allAgentBeads is a preloaded map of agent beads for O(1) lookup.
@@ -1597,10 +1623,11 @@ func resolveHookFromMap(allHandoffs map[string]*beads.Issue, role, agentAddress,
 func discoverGlobalAgents(townRoot string, allSessions map[string]bool, allAgentBeads map[string]*beads.Issue, allHookBeads map[string]*beads.Issue, mailRouter *mail.Router, skipMail bool) []AgentRuntime {
 	// Get session names dynamically
 	mayorSession := getMayorSessionName()
+	clerkSession := session.ClerkSessionName()
 	deaconSession := getDeaconSessionName()
 
 	// Define agents to discover
-	// Note: Mayor and Deacon are town-level agents with hq- prefix bead IDs
+	// Town-level agents use hq- session names and Town beads.
 	agentDefs := []struct {
 		name    string
 		address string
@@ -1608,6 +1635,7 @@ func discoverGlobalAgents(townRoot string, allSessions map[string]bool, allAgent
 		role    string
 		beadID  string
 	}{
+		{constants.RoleClerk, constants.RoleClerk + "/", clerkSession, constants.RoleClerk, beads.ClerkBeadIDTown()},
 		{constants.RoleMayor, constants.RoleMayor + "/", mayorSession, "coordinator", beads.MayorBeadIDTown()},
 		{constants.RoleDeacon, constants.RoleDeacon + "/", deaconSession, "health-check", beads.DeaconBeadIDTown()},
 	}

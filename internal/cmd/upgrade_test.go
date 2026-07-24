@@ -27,6 +27,37 @@ func TestGenerateCLAUDEMD(t *testing.T) {
 	}
 }
 
+func TestUpgradeClerkProvisionsNativeRole(t *testing.T) {
+	townRoot := t.TempDir()
+	upgradeDryRun = false
+
+	result := upgradeClerk(townRoot)
+	if result.changed != 2 {
+		t.Fatalf("upgradeClerk changed = %d, want 2", result.changed)
+	}
+	for _, path := range []string{
+		filepath.Join(townRoot, "clerk", "clerk.json"),
+		filepath.Join(townRoot, "clerk", ".claude", "settings.json"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected %s: %v", path, err)
+		}
+	}
+}
+
+func TestUpgradeClerkDryRunDoesNotWrite(t *testing.T) {
+	townRoot := t.TempDir()
+	upgradeDryRun = true
+	t.Cleanup(func() { upgradeDryRun = false })
+
+	result := upgradeClerk(townRoot)
+	if result.changed != 2 {
+		t.Fatalf("upgradeClerk dry-run changed = %d, want 2", result.changed)
+	}
+	if _, err := os.Stat(filepath.Join(townRoot, "clerk")); !os.IsNotExist(err) {
+		t.Fatal("dry-run created clerk directory")
+	}
+}
 
 func TestUpgradeCLAUDEMD_CreatesMissingFile(t *testing.T) {
 	tmpDir := t.TempDir()
