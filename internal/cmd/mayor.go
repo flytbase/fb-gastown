@@ -47,9 +47,9 @@ var (
 var mayorStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the Mayor session",
-	Long: `Start the Mayor tmux session.
+	Long: `Start the Mayor terminal session.
 
-Creates a new detached tmux session for the Mayor and launches Claude.
+Creates a session using the Town's selected backend and launches the configured agent.
 The session runs in the workspace root directory.`,
 	RunE: runMayorStart,
 }
@@ -57,9 +57,9 @@ The session runs in the workspace root directory.`,
 var mayorStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the Mayor session",
-	Long: `Stop the Mayor tmux session.
+	Long: `Stop the Mayor terminal session.
 
-Attempts graceful shutdown first (Ctrl-C), then kills the tmux session.`,
+Attempts graceful shutdown first, then closes the backend session.`,
 	RunE: runMayorStop,
 }
 
@@ -67,24 +67,23 @@ var mayorAttachCmd = &cobra.Command{
 	Use:     "attach",
 	Aliases: []string{"at"},
 	Short:   "Attach to the Mayor session",
-	Long: `Attach to the running Mayor tmux session.
+	Long: `Attach to the running Mayor session.
 
-Attaches the current terminal to the Mayor's tmux session.
-Detach with Ctrl-B D.`,
+Uses the Town's selected tmux or Herdr backend.`,
 	RunE: runMayorAttach,
 }
 
 var mayorStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Check Mayor session status",
-	Long:  `Check if the Mayor tmux session is currently running.`,
+	Long:  `Check if the Mayor terminal session is currently running.`,
 	RunE:  runMayorStatus,
 }
 
 var mayorRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Restart the Mayor session",
-	Long: `Restart the Mayor tmux session.
+	Long: `Restart the Mayor terminal session.
 
 Stops the current session (if running) and starts a fresh one.`,
 	RunE: runMayorRestart,

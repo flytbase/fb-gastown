@@ -623,6 +623,7 @@ Supported keys:
   cli_theme                   CLI color scheme ("dark", "light", "auto")
   default_agent               Default agent preset name
   session_backend             Town-wide terminal transport ("tmux" or "herdr")
+  herdr_session               Herdr session ("current", "managed", or a name)
   dolt.port                   Dolt SQL server port (default: 3307). Set this when
                               another Gas Town instance is using the same port.
                               Writes GT_DOLT_PORT to mayor/daemon.json env section.
@@ -650,6 +651,7 @@ Examples:
   gt config set cli_theme dark
   gt config set default_agent claude
   gt config set session_backend herdr
+  gt config set herdr_session current
   gt config set dolt.port 3308
   gt config set scheduler.max_polecats 5
   gt config set maintenance.window 03:00
@@ -672,6 +674,7 @@ Supported keys:
   cli_theme                   CLI color scheme
   default_agent               Default agent preset name
   session_backend             Town-wide terminal transport (tmux or herdr)
+  herdr_session               Herdr session binding (managed or a name)
   scheduler.max_polecats      Dispatch mode (-1 = direct, N > 0 = deferred)
   scheduler.batch_size        Beads per heartbeat
   scheduler.spawn_delay       Delay between spawns
@@ -695,6 +698,7 @@ Examples:
   gt config get convoy.notify_on_complete
   gt config get cli_theme
   gt config get session_backend
+  gt config get herdr_session
   gt config get maintenance.window
   gt config get lifecycle.reaper.delete_age`,
 	Args: cobra.ExactArgs(1),
@@ -749,6 +753,20 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 			}
 		}
 		townSettings.SessionBackend = backend
+
+	case "herdr_session":
+		concrete := value
+		if strings.EqualFold(strings.TrimSpace(value), "current") {
+			concrete = strings.TrimSpace(os.Getenv("HERDR_SESSION"))
+			if concrete == "" || os.Getenv("HERDR_ENV") != "1" {
+				return fmt.Errorf("herdr_session=current must be run inside the Herdr session you want this Town to join")
+			}
+		}
+		sessionName, err := config.ParseHerdrSession(concrete)
+		if err != nil {
+			return err
+		}
+		townSettings.HerdrSession = sessionName
 
 	case "scheduler.max_polecats":
 		n, err := strconv.Atoi(value)
@@ -811,7 +829,7 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		if strings.HasPrefix(key, "lifecycle.") {
 			return setLifecycleConfig(townRoot, key, value)
 		}
-		return fmt.Errorf("unknown config key: %q\n\nSupported keys:\n  convoy.notify_on_complete\n  cli_theme\n  default_agent\n  session_backend\n  dolt.port\n  scheduler.max_polecats\n  scheduler.batch_size\n  scheduler.spawn_delay\n  maintenance.window\n  maintenance.interval\n  maintenance.threshold\n  lifecycle.reaper.*\n  lifecycle.compactor.*\n  lifecycle.doctor.*\n  lifecycle.backup.*", key)
+		return fmt.Errorf("unknown config key: %q\n\nSupported keys:\n  convoy.notify_on_complete\n  cli_theme\n  default_agent\n  session_backend\n  herdr_session\n  dolt.port\n  scheduler.max_polecats\n  scheduler.batch_size\n  scheduler.spawn_delay\n  maintenance.window\n  maintenance.interval\n  maintenance.threshold\n  lifecycle.reaper.*\n  lifecycle.compactor.*\n  lifecycle.doctor.*\n  lifecycle.backup.*", key)
 	}
 
 	if err := config.SaveTownSettings(settingsPath, townSettings); err != nil {
@@ -821,6 +839,14 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Set %s = %s\n", style.Bold.Render(key), value)
 	if key == "session_backend" {
 		fmt.Printf("  %s\n", style.Dim.Render("Restart Town sessions to apply the new backend: gt down && gt up"))
+	}
+	if key == "herdr_session" {
+		display := townSettings.HerdrSession
+		if display == "" {
+			display = "managed"
+		}
+		fmt.Printf("  %s\n", style.Dim.Render("Stored Herdr session: "+display))
+		fmt.Printf("  %s\n", style.Dim.Render("Stop Town roles before changing this binding, then run: gt up"))
 	}
 	return nil
 }
@@ -863,6 +889,12 @@ func runConfigGet(cmd *cobra.Command, args []string) error {
 	case "session_backend":
 		value = config.SessionBackendFromSettings(townSettings)
 
+	case "herdr_session":
+		value = townSettings.HerdrSession
+		if value == "" {
+			value = "managed"
+		}
+
 	case "scheduler.max_polecats":
 		scfg := townSettings.Scheduler
 		if scfg == nil {
@@ -902,7 +934,7 @@ func runConfigGet(cmd *cobra.Command, args []string) error {
 		if strings.HasPrefix(key, "lifecycle.") {
 			return getLifecycleConfig(townRoot, key)
 		}
-		return fmt.Errorf("unknown config key: %q\n\nSupported keys:\n  convoy.notify_on_complete\n  cli_theme\n  default_agent\n  dolt.port\n  scheduler.max_polecats\n  scheduler.batch_size\n  scheduler.spawn_delay\n  maintenance.window\n  maintenance.interval\n  maintenance.threshold\n  lifecycle.reaper.*\n  lifecycle.compactor.*\n  lifecycle.doctor.*\n  lifecycle.backup.*", key)
+		return fmt.Errorf("unknown config key: %q\n\nSupported keys:\n  convoy.notify_on_complete\n  cli_theme\n  default_agent\n  session_backend\n  herdr_session\n  dolt.port\n  scheduler.max_polecats\n  scheduler.batch_size\n  scheduler.spawn_delay\n  maintenance.window\n  maintenance.interval\n  maintenance.threshold\n  lifecycle.reaper.*\n  lifecycle.compactor.*\n  lifecycle.doctor.*\n  lifecycle.backup.*", key)
 	}
 
 	fmt.Println(value)

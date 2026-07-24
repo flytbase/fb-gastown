@@ -159,9 +159,9 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 				existingSession)
 			fmt.Printf("  Attaching to existing session instead of creating a new one\n")
 
-			// If inside tmux (but different session), inform user
-			if tmux.IsInsideTmux() {
-				fmt.Printf("Use C-b s to switch to '%s'\n", existingSession)
+			// If inside the selected backend (but a different session), inform user.
+			if tmux.IsInsideSession() {
+				fmt.Printf("Use 'gt crew at %s' to focus '%s'\n", name, existingSession)
 				return nil
 			}
 
@@ -371,13 +371,13 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 	}
 
 	// If inside tmux (but different session), don't switch - just inform user
-	insideTmux := tmux.IsInsideTmux()
+	insideTmux := tmux.IsInsideSession()
 	if debug {
-		fmt.Printf("[DEBUG] tmux.IsInsideTmux()=%v\n", insideTmux)
+		fmt.Printf("[DEBUG] tmux.IsInsideSession()=%v\n", insideTmux)
 	}
 	if insideTmux {
-		fmt.Printf("Session %s ready. Use C-b s to switch.\n", sessionID)
-		return nil
+		fmt.Printf("Focusing session %s...\n", sessionID)
+		return t.SwitchClient(sessionID)
 	}
 
 	// Outside tmux: attach unless --detached flag is set

@@ -3,11 +3,15 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/clerk"
+	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/herdr"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -29,6 +33,8 @@ var (
 	clerkSlingNoMerge    bool
 	clerkSlingReviewOnly bool
 	clerkSlingProfile    string
+	clerkSessionAlias    string
+	clerkSessionLines    int
 )
 
 var clerkCmd = &cobra.Command{
@@ -162,6 +168,164 @@ var clerkSlingCmd = &cobra.Command{
 	RunE:  runClerkSling,
 }
 
+var clerkSessionsCmd = &cobra.Command{
+	Use:   "sessions",
+	Short: "Access allow-listed external Herdr worker sessions",
+	RunE:  requireSubcommand,
+}
+
+var clerkSessionsAllowCmd = &cobra.Command{
+	Use:   "allow <current|session-name>",
+	Short: "Allow Clerk to read and nudge an external Herdr session",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		if role := strings.TrimSpace(os.Getenv("GT_ROLE")); role != "" {
+			return fmt.Errorf("external session access must be configured from a neutral human shell (GT_ROLE=%s)", role)
+		}
+		sessionName := strings.TrimSpace(args[0])
+		if strings.EqualFold(sessionName, "current") {
+			sessionName = strings.TrimSpace(os.Getenv("HERDR_SESSION"))
+			if sessionName == "" || os.Getenv("HERDR_ENV") != "1" {
+				return fmt.Errorf("current must be run inside the Herdr session containing the manual workers")
+			}
+		}
+		sessionName, err := config.ParseHerdrSession(sessionName)
+		if err != nil {
+			return err
+		}
+		townRoot, err := workspace.FindFromCwdOrError()
+		if err != nil {
+			return err
+		}
+		external := clerk.ExternalSession{
+			Name:       sessionName,
+			Alias:      strings.TrimSpace(clerkSessionAlias),
+			AllowRead:  true,
+			AllowNudge: true,
+		}
+		if err := clerk.AllowExternalSession(townRoot, external); err != nil {
+			return err
+		}
+		fmt.Printf("%s Clerk may read and nudge Herdr session %s", style.Bold.Render("✓"), sessionName)
+		if external.Alias != "" {
+			fmt.Printf(" (%s)", external.Alias)
+		}
+		fmt.Println()
+		fmt.Println("  Destructive session, workspace, tab, and pane operations remain unavailable.")
+		return nil
+	},
+}
+
+var clerkSessionsListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List Clerk's external Herdr session allow-list",
+	RunE: func(_ *cobra.Command, _ []string) error {
+		townRoot, err := workspace.FindFromCwdOrError()
+		if err != nil {
+			return err
+		}
+		policy, err := clerk.LoadPolicy(townRoot)
+		if err != nil {
+			return err
+		}
+		if len(policy.Sessions.External) == 0 {
+			fmt.Println("No external Herdr sessions are allow-listed.")
+			return nil
+		}
+		for _, external := range policy.Sessions.External {
+			ref := external.Name
+			if external.Alias != "" {
+				ref = external.Alias + " → " + external.Name
+			}
+			fmt.Printf("%s  read=%t nudge=%t\n", ref, external.AllowRead, external.AllowNudge)
+		}
+		return nil
+	},
+}
+
+var clerkSessionsWorkspacesCmd = &cobra.Command{
+	Use:   "workspaces <session-or-alias>",
+	Short: "List workspaces in an allow-listed external Herdr session",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		external, err := resolveClerkExternalSession(args[0], false)
+		if err != nil {
+			return err
+		}
+		out, err := herdr.ListExternalWorkspaces(external.Name)
+		if err != nil {
+			return err
+		}
+		fmt.Print(string(out))
+		return nil
+	},
+}
+
+var clerkSessionsPanesCmd = &cobra.Command{
+	Use:   "panes <session-or-alias> <workspace-id>",
+	Short: "List panes in one external Herdr workspace",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(_ *cobra.Command, args []string) error {
+		external, err := resolveClerkExternalSession(args[0], false)
+		if err != nil {
+			return err
+		}
+		out, err := herdr.ListExternalPanes(external.Name, args[1])
+		if err != nil {
+			return err
+		}
+		fmt.Print(string(out))
+		return nil
+	},
+}
+
+var clerkSessionsReadCmd = &cobra.Command{
+	Use:   "read <session-or-alias> <pane-id>",
+	Short: "Read a pane in an allow-listed external Herdr session",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(_ *cobra.Command, args []string) error {
+		external, err := resolveClerkExternalSession(args[0], false)
+		if err != nil {
+			return err
+		}
+		out, err := herdr.ReadExternalPane(external.Name, args[1], clerkSessionLines)
+		if err != nil {
+			return err
+		}
+		fmt.Print(string(out))
+		return nil
+	},
+}
+
+var clerkSessionsNudgeCmd = &cobra.Command{
+	Use:   "nudge <session-or-alias> <pane-id> <message>",
+	Short: "Send a supervised prompt to an external worker pane",
+	Args:  cobra.ExactArgs(3),
+	RunE: func(_ *cobra.Command, args []string) error {
+		external, err := resolveClerkExternalSession(args[0], true)
+		if err != nil {
+			return err
+		}
+		if _, err := herdr.NudgeExternalPane(external.Name, args[1], args[2]); err != nil {
+			return err
+		}
+		fmt.Printf("%s Nudged %s/%s\n", style.Bold.Render("✓"), external.Name, args[1])
+		return nil
+	},
+}
+
+func resolveClerkExternalSession(ref string, nudge bool) (clerk.ExternalSession, error) {
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return clerk.ExternalSession{}, err
+	}
+	policy, err := clerk.LoadPolicy(townRoot)
+	if err != nil {
+		return clerk.ExternalSession{}, err
+	}
+	return policy.ResolveExternalSession(ref, nudge)
+}
+
 func init() {
 	clerkStartCmd.Flags().StringVar(&clerkAgentOverride, "agent", "", "Agent alias to run the Clerk with")
 	clerkAuthorizeCmd.Flags().DurationVar(&clerkTTL, "ttl", 10*time.Minute, "Authorization lifetime")
@@ -178,9 +342,14 @@ func init() {
 	clerkSlingCmd.Flags().BoolVar(&clerkSlingNoMerge, "no-merge", false, "Keep work off the merge queue")
 	clerkSlingCmd.Flags().BoolVar(&clerkSlingReviewOnly, "review-only", false, "Review and report without merging")
 	clerkSlingCmd.Flags().StringVar(&clerkSlingProfile, "profile", "", "Clerk routing profile from clerk.json")
+	clerkSessionsAllowCmd.Flags().StringVar(&clerkSessionAlias, "alias", "", "Short stable name for the external session")
+	clerkSessionsReadCmd.Flags().IntVar(&clerkSessionLines, "lines", 120, "Recent unwrapped lines to read")
 
 	clerkCmd.AddCommand(clerkStartCmd, clerkStopCmd, clerkStatusCmd, clerkAttachCmd)
 	clerkCmd.AddCommand(clerkRequestCmd, clerkAuthorizeCmd, clerkSlingCmd)
+	clerkSessionsCmd.AddCommand(clerkSessionsAllowCmd, clerkSessionsListCmd)
+	clerkSessionsCmd.AddCommand(clerkSessionsWorkspacesCmd, clerkSessionsPanesCmd, clerkSessionsReadCmd, clerkSessionsNudgeCmd)
+	clerkCmd.AddCommand(clerkSessionsCmd)
 	rootCmd.AddCommand(clerkCmd)
 }
 

@@ -59,14 +59,9 @@ func init() {
 func runIssueSet(cmd *cobra.Command, args []string) error {
 	issueID := args[0]
 
-	// Get current tmux session
-	session := os.Getenv("TMUX_PANE")
-	if session == "" {
-		// Try to detect from GT env vars
-		session = detectCurrentSession()
-		if session == "" {
-			return fmt.Errorf("not in a tmux session")
-		}
+	session, err := tmux.NewTmux().ResolveCurrentSession()
+	if err != nil || session == "" {
+		return fmt.Errorf("not in a managed Town session")
 	}
 
 	t := tmux.NewTmux()
@@ -79,12 +74,9 @@ func runIssueSet(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueClear(cmd *cobra.Command, args []string) error {
-	session := os.Getenv("TMUX_PANE")
-	if session == "" {
-		session = detectCurrentSession()
-		if session == "" {
-			return fmt.Errorf("not in a tmux session")
-		}
+	session, err := tmux.NewTmux().ResolveCurrentSession()
+	if err != nil || session == "" {
+		return fmt.Errorf("not in a managed Town session")
 	}
 
 	t := tmux.NewTmux()
@@ -98,12 +90,9 @@ func runIssueClear(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueShow(cmd *cobra.Command, args []string) error {
-	session := os.Getenv("TMUX_PANE")
-	if session == "" {
-		session = detectCurrentSession()
-		if session == "" {
-			return fmt.Errorf("not in a tmux session")
-		}
+	session, err := tmux.NewTmux().ResolveCurrentSession()
+	if err != nil || session == "" {
+		return fmt.Errorf("not in a managed Town session")
 	}
 
 	t := tmux.NewTmux()

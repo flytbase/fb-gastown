@@ -131,9 +131,17 @@ func InitRegistry(townRoot string) error {
 	} else {
 		_ = os.Setenv(config.SessionBackendEnv, backend)
 	}
-	if strings.TrimSpace(os.Getenv("GT_ROOT")) == "" {
-		_ = os.Setenv("GT_ROOT", townRoot)
+	if herdrSession, resolveErr := config.ResolveHerdrSession(townRoot); resolveErr != nil {
+		errs = append(errs, fmt.Errorf("Herdr session: %w", resolveErr))
+	} else if herdrSession != "" {
+		_ = os.Setenv(config.HerdrSessionEnv, herdrSession)
+	} else {
+		_ = os.Unsetenv(config.HerdrSessionEnv)
 	}
+	// Pin the resolved Town for this command. A stale shell-level GT_ROOT must
+	// not route Herdr operations to another Town when CWD resolved correctly.
+	_ = os.Setenv("GT_ROOT", townRoot)
+	_ = os.Setenv("GT_TOWN_ROOT", townRoot)
 
 	// Determine the tmux socket name from GT_TMUX_SOCKET env var:
 	//   unset / "default" / "auto" → per-town socket derived from town directory path

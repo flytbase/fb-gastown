@@ -29,6 +29,9 @@ func NewThemeCheck() *ThemeCheck {
 
 // Run checks if tmux sessions have themes applied correctly.
 func (c *ThemeCheck) Run(ctx *CheckContext) *CheckResult {
+	if usesHerdrBackend(ctx) {
+		return skippedForHerdr(c.Name())
+	}
 	t := tmux.NewTmux()
 
 	// List all sessions
@@ -94,6 +97,9 @@ func (c *ThemeCheck) Run(ctx *CheckContext) *CheckResult {
 
 // Fix applies themes to all sessions.
 func (c *ThemeCheck) Fix(ctx *CheckContext) error {
+	if usesHerdrBackend(ctx) {
+		return nil
+	}
 	cmd := exec.Command("gt", "theme", "apply", "--all")
 	cmd.Dir = ctx.TownRoot
 	return cmd.Run()

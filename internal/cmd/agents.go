@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/herdr"
 	"github.com/steveyegge/gastown/internal/lock"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
@@ -23,6 +24,7 @@ type AgentType int
 
 const (
 	AgentMayor AgentType = iota
+	AgentClerk
 	AgentDeacon
 	AgentWitness
 	AgentRefinery
@@ -44,6 +46,7 @@ type AgentSession struct {
 // AgentTypeColors maps agent types to tmux color codes.
 var AgentTypeColors = map[AgentType]string{
 	AgentMayor:    "#[fg=red,bold]",
+	AgentClerk:    "#[fg=green,bold]",
 	AgentDeacon:   "#[fg=yellow,bold]",
 	AgentWitness:  "#[fg=cyan]",
 	AgentRefinery: "#[fg=blue]",
@@ -65,6 +68,7 @@ var rigTypeOrder = map[AgentType]int{
 // Uses centralized emojis from constants package.
 var AgentTypeIcons = map[AgentType]string{
 	AgentMayor:    constants.EmojiMayor,
+	AgentClerk:    constants.EmojiClerk,
 	AgentDeacon:   constants.EmojiDeacon,
 	AgentWitness:  constants.EmojiWitness,
 	AgentRefinery: constants.EmojiRefinery,
@@ -162,6 +166,8 @@ func categorizeSession(name string) *AgentSession {
 	switch identity.Role {
 	case session.RoleMayor:
 		sess.Type = AgentMayor
+	case session.RoleClerk:
+		sess.Type = AgentClerk
 	case session.RoleDeacon:
 		sess.Type = AgentDeacon
 	case session.RoleWitness:
@@ -324,7 +330,7 @@ func filterAndSortSessions(sessionNames []string, includePolecats bool) []*Agent
 		agents = append(agents, agent)
 	}
 
-	// Sort: mayor, deacon first, then by rig, then by type
+	// Sort: mayor, clerk, deacon first, then by rig, then by type
 	sort.Slice(agents, func(i, j int) bool {
 		a, b := agents[i], agents[j]
 
@@ -333,6 +339,12 @@ func filterAndSortSessions(sessionNames []string, includePolecats bool) []*Agent
 			return true
 		}
 		if b.Type == AgentMayor {
+			return false
+		}
+		if a.Type == AgentClerk {
+			return true
+		}
+		if b.Type == AgentClerk {
 			return false
 		}
 		if a.Type == AgentDeacon {
@@ -378,6 +390,8 @@ func (a *AgentSession) displayLabel() string {
 	switch a.Type {
 	case AgentMayor:
 		return fmt.Sprintf("%s%s Mayor#[default]", color, icon)
+	case AgentClerk:
+		return fmt.Sprintf("%s%s Clerk#[default]", color, icon)
 	case AgentDeacon:
 		return fmt.Sprintf("%s%s Deacon#[default]", color, icon)
 	case AgentWitness:
@@ -443,6 +457,10 @@ func shortcutKey(index int) string {
 }
 
 func runAgents(cmd *cobra.Command, args []string) error {
+	if herdr.Enabled() {
+		return runHerdrAgentsMenu()
+	}
+
 	groups := getAllSocketSessions(agentsAllFlag)
 
 	// Count total sessions across all groups
@@ -537,6 +555,34 @@ func runAgents(cmd *cobra.Command, args []string) error {
 	return execCmd.Run()
 }
 
+// runHerdrAgentsMenu provides the semantic equivalent of the tmux popup:
+// enumerate Town sessions, let the user choose one, then focus its Herdr tab.
+func runHerdrAgentsMenu() error {
+	agents, err := getAgentSessions(agentsAllFlag)
+	if err != nil {
+		return fmt.Errorf("listing Herdr sessions: %w", err)
+	}
+	if len(agents) == 0 {
+		fmt.Println("No agent sessions running.")
+		return nil
+	}
+
+	fmt.Println("Gas Town agents:")
+	for i, agent := range agents {
+		fmt.Printf("  %d. %s\n", i+1, agent.Name)
+	}
+	fmt.Print("Select agent number: ")
+
+	var selected int
+	if _, err := fmt.Fscan(os.Stdin, &selected); err != nil {
+		return fmt.Errorf("reading selection: %w", err)
+	}
+	if selected < 1 || selected > len(agents) {
+		return fmt.Errorf("selection must be between 1 and %d", len(agents))
+	}
+	return tmux.NewTmux().SwitchClient(agents[selected-1].Name)
+}
+
 func runAgentsList(cmd *cobra.Command, args []string) error {
 	agents, err := getAgentSessions(agentsAllFlag)
 	if err != nil {
@@ -563,6 +609,8 @@ func runAgentsList(cmd *cobra.Command, args []string) error {
 		switch agent.Type {
 		case AgentMayor:
 			fmt.Printf("  %s Mayor\n", icon)
+		case AgentClerk:
+			fmt.Printf("  %s Clerk\n", icon)
 		case AgentDeacon:
 			fmt.Printf("  %s Deacon\n", icon)
 		case AgentWitness:

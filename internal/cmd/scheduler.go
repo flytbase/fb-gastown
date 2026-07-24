@@ -143,12 +143,12 @@ func runSchedulerStatus(cmd *cobra.Command, args []string) error {
 
 	if schedulerStatusJSON {
 		out := struct {
-			Paused         bool               `json:"paused"`
-			PausedBy       string             `json:"paused_by,omitempty"`
-			ScheduledTotal int                `json:"queued_total"`
-			ScheduledReady int                `json:"queued_ready"`
-			ActivePolecats int                `json:"active_polecats"`
-			LastDispatchAt string             `json:"last_dispatch_at,omitempty"`
+			Paused         bool                `json:"paused"`
+			PausedBy       string              `json:"paused_by,omitempty"`
+			ScheduledTotal int                 `json:"queued_total"`
+			ScheduledReady int                 `json:"queued_ready"`
+			ActivePolecats int                 `json:"active_polecats"`
+			LastDispatchAt string              `json:"last_dispatch_at,omitempty"`
 			Beads          []scheduledBeadInfo `json:"beads"`
 		}{
 			Paused:         state.Paused,
@@ -464,23 +464,22 @@ func beadsSearchDirs(townRoot string) []string {
 	return dirs
 }
 
-// countActivePolecats counts all running polecat tmux sessions across all rigs.
+// countActivePolecats counts all running polecat sessions across all rigs.
 // This includes idle polecats (completed work, no hook bead) which still occupy
 // tmux sessions under the persistent polecat model. For capacity gating, use
 // countWorkingPolecats which excludes idle sessions.
 func countActivePolecats() int {
-	listCmd := tmux.BuildCommand("list-sessions", "-F", "#{session_name}")
-	out, err := listCmd.Output()
+	sessions, err := tmux.NewTmux().ListSessions()
 	if err != nil {
 		return 0
 	}
 
 	count := 0
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
+	for _, sessionName := range sessions {
+		if sessionName == "" {
 			continue
 		}
-		identity, err := session.ParseSessionName(line)
+		identity, err := session.ParseSessionName(sessionName)
 		if err != nil {
 			continue
 		}
@@ -501,19 +500,18 @@ func countWorkingPolecats() int {
 		return countActivePolecats() // Fallback to total count
 	}
 
-	listCmd := tmux.BuildCommand("list-sessions", "-F", "#{session_name}")
-	out, err := listCmd.Output()
+	sessions, err := tmux.NewTmux().ListSessions()
 	if err != nil {
 		return 0
 	}
 
 	bd := beads.New(townRoot)
 	count := 0
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
+	for _, sessionName := range sessions {
+		if sessionName == "" {
 			continue
 		}
-		identity, err := session.ParseSessionName(line)
+		identity, err := session.ParseSessionName(sessionName)
 		if err != nil || identity.Role != session.RolePolecat {
 			continue
 		}

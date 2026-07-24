@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"sort"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/config"
 	sessionpkg "github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
@@ -189,6 +191,10 @@ func cycleInGroup(direction int, currentSession string, sessions []string) error
 		return nil // Only one session
 	}
 
+	if os.Getenv(config.SessionBackendEnv) == config.SessionBackendHerdr {
+		return tmux.NewTmux().SwitchClient(sessions[targetIdx])
+	}
+
 	args := []string{"switch-client"}
 	if cycleClientTarget != "" {
 		args = append(args, "-c", cycleClientTarget)
@@ -214,11 +220,7 @@ func cycleRigOpsSession(direction int, currentSession, rig string) error {
 	return cycleInGroup(direction, currentSession, sessions)
 }
 
-// listTmuxSessions returns all tmux session names.
+// listTmuxSessions returns all logical session names from the selected backend.
 func listTmuxSessions() ([]string, error) {
-	out, err := tmux.BuildCommand("list-sessions", "-F", "#{session_name}").Output()
-	if err != nil {
-		return nil, err
-	}
-	return splitLines(string(out)), nil
+	return tmux.NewTmux().ListSessions()
 }

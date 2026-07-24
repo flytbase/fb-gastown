@@ -8,6 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/tui/feed"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -289,6 +291,40 @@ func runFeedTUI(workDir string, problemsView bool) error {
 
 // runFeedInWindow opens the feed in a dedicated tmux window.
 func runFeedInWindow(workDir string, bdArgs []string) error {
+	// Build the command to run in the backend-specific view.
+	// Use gt feed --plain instead of bd activity (which may not exist).
+	gtPath, err := os.Executable()
+	if err != nil {
+		gtPath = "gt"
+	}
+	feedWindowCmd := fmt.Sprintf("cd \"%s\" && \"%s\" feed --plain --follow", workDir, gtPath)
+	if len(bdArgs) > 0 {
+		var filteredArgs []string
+		for _, arg := range bdArgs {
+			if arg != "--follow" {
+				filteredArgs = append(filteredArgs, arg)
+			}
+		}
+		if len(filteredArgs) > 0 {
+			feedWindowCmd = fmt.Sprintf("cd \"%s\" && \"%s\" feed --plain --follow %s", workDir, gtPath, strings.Join(filteredArgs, " "))
+		}
+	}
+
+	if os.Getenv(config.SessionBackendEnv) == config.SessionBackendHerdr {
+		t := tmux.NewTmux()
+		feedSession := session.FeedSessionName()
+		exists, err := t.HasSession(feedSession)
+		if err != nil {
+			return fmt.Errorf("checking Herdr feed tab: %w", err)
+		}
+		if !exists {
+			if err := t.NewSessionWithCommand(feedSession, workDir, feedWindowCmd); err != nil {
+				return fmt.Errorf("creating Herdr feed tab: %w", err)
+			}
+		}
+		return t.SwitchClient(feedSession)
+	}
+
 	// Check if we're in tmux
 	if !tmux.IsInsideTmux() {
 		return fmt.Errorf("--window requires running inside tmux")
@@ -307,25 +343,6 @@ func runFeedInWindow(workDir string, bdArgs []string) error {
 	sessionName, err := getCurrentTmuxSession()
 	if err != nil {
 		return fmt.Errorf("getting current session: %w", err)
-	}
-
-	// Build the command to run in the window
-	// Use gt feed --plain instead of bd activity (which may not exist)
-	gtPath, err := os.Executable()
-	if err != nil {
-		gtPath = "gt"
-	}
-	feedWindowCmd := fmt.Sprintf("cd \"%s\" && \"%s\" feed --plain --follow", workDir, gtPath)
-	if len(bdArgs) > 0 {
-		var filteredArgs []string
-		for _, arg := range bdArgs {
-			if arg != "--follow" {
-				filteredArgs = append(filteredArgs, arg)
-			}
-		}
-		if len(filteredArgs) > 0 {
-			feedWindowCmd = fmt.Sprintf("cd \"%s\" && \"%s\" feed --plain --follow %s", workDir, gtPath, strings.Join(filteredArgs, " "))
-		}
 	}
 
 	// Check if 'feed' window already exists

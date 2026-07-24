@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/session"
 )
 
 // townCycleSession is the --session flag for town next/prev commands.
@@ -14,19 +15,21 @@ var townCycleSession string
 // getTownLevelSessions returns the town-level session names for the current workspace.
 func getTownLevelSessions() []string {
 	mayorSession := getMayorSessionName()
+	clerkSession := session.ClerkSessionName()
 	deaconSession := getDeaconSessionName()
-	return []string{mayorSession, deaconSession}
+	return []string{mayorSession, clerkSession, deaconSession}
 }
 
 // isTownLevelSession checks if the given session name is a town-level session.
-// Town-level sessions (Mayor, Deacon) use the "hq-" prefix, so we can identify
+// Town-level sessions (Mayor, Clerk, Deacon) use the "hq-" prefix, so we can identify
 // them by name alone without requiring workspace context. This is critical for
 // tmux run-shell which may execute from outside the workspace directory.
 func isTownLevelSession(sessionName string) bool {
 	// Town-level sessions are identified by their fixed names
-	mayorSession := getMayorSessionName()  // "hq-mayor"
-	deaconSession := getDeaconSessionName() // "hq-deacon"
-	return sessionName == mayorSession || sessionName == deaconSession
+	mayorSession := getMayorSessionName()      // "hq-mayor"
+	clerkSession := session.ClerkSessionName() // "hq-clerk"
+	deaconSession := getDeaconSessionName()    // "hq-deacon"
+	return sessionName == mayorSession || sessionName == clerkSession || sessionName == deaconSession
 }
 
 func init() {
@@ -46,9 +49,9 @@ var townCmd = &cobra.Command{
 
 var townNextCmd = &cobra.Command{
 	Use:   "next",
-	Short: "Switch to next town session (mayor/deacon)",
+	Short: "Switch to next town session (mayor/clerk/deacon)",
 	Long: `Switch to the next town-level session in the cycle order.
-Town sessions cycle between Mayor and Deacon.
+Town sessions cycle between Mayor, Clerk, and Deacon.
 
 This command is typically invoked via the C-b n keybinding when in a
 town-level session (Mayor or Deacon).`,
@@ -59,9 +62,9 @@ town-level session (Mayor or Deacon).`,
 
 var townPrevCmd = &cobra.Command{
 	Use:   "prev",
-	Short: "Switch to previous town session (mayor/deacon)",
+	Short: "Switch to previous town session (mayor/clerk/deacon)",
 	Long: `Switch to the previous town-level session in the cycle order.
-Town sessions cycle between Mayor and Deacon.
+Town sessions cycle between Mayor, Clerk, and Deacon.
 
 This command is typically invoked via the C-b p keybinding when in a
 town-level session (Mayor or Deacon).`,
@@ -76,10 +79,10 @@ town-level session (Mayor or Deacon).`,
 func cycleTownSession(direction int, sessionOverride string) error {
 	currentSession, err := resolveCurrentSession(sessionOverride)
 	if err != nil {
-		return fmt.Errorf("not in a tmux session: %w", err)
+		return fmt.Errorf("not in a managed Town session: %w", err)
 	}
 	if currentSession == "" {
-		return fmt.Errorf("not in a tmux session")
+		return fmt.Errorf("not in a managed Town session")
 	}
 
 	if !isTownLevelSession(currentSession) {
@@ -98,7 +101,7 @@ func cycleTownSession(direction int, sessionOverride string) error {
 func findRunningTownSessions() ([]string, error) {
 	allSessions, err := listTmuxSessions()
 	if err != nil {
-		return nil, fmt.Errorf("listing tmux sessions: %w", err)
+		return nil, fmt.Errorf("listing backend sessions: %w", err)
 	}
 
 	townLevelSessions := getTownLevelSessions()

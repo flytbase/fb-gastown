@@ -303,17 +303,11 @@ func handleStepContinue(cwd, townRoot string, nextStep *beads.Issue, dryRun bool
 
 	fmt.Printf("%s Next step pinned: %s\n", style.Bold.Render("📌"), nextStep.ID)
 
-	// Respawn the pane
-	if !tmux.IsInsideTmux() {
-		// Not in tmux - just print next action
-		fmt.Printf("\n%s Not in tmux - start new session with 'gt prime'\n",
+	// Respawn the backend pane.
+	if !tmux.IsInsideSession() {
+		fmt.Printf("\n%s Not in a managed Town session - start a session with 'gt prime'\n",
 			style.Dim.Render("ℹ"))
 		return nil
-	}
-
-	pane := os.Getenv("TMUX_PANE")
-	if pane == "" {
-		return fmt.Errorf("TMUX_PANE not set")
 	}
 
 	// Get current session for restart command
@@ -330,6 +324,10 @@ func handleStepContinue(cwd, townRoot string, nextStep *beads.Issue, dryRun bool
 	fmt.Printf("\n%s Respawning for next step...\n", style.Bold.Render("🔄"))
 
 	t := tmux.NewTmux()
+	pane, err := t.GetPaneID(currentSession)
+	if err != nil {
+		return fmt.Errorf("getting backend pane: %w", err)
+	}
 
 	// Kill all processes in the pane before respawning to prevent process leaks
 	if err := t.KillPaneProcesses(pane); err != nil {

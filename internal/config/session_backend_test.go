@@ -83,3 +83,45 @@ func TestSessionBackendFromSettingsDefaultsToTmux(t *testing.T) {
 		t.Fatalf("SessionBackendFromSettings(defaults) = %q, want tmux", got)
 	}
 }
+
+func TestParseHerdrSession(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{"", "", false},
+		{"managed", "", false},
+		{"team.session-1", "team.session-1", false},
+		{"current", "", true},
+		{"has space", "", true},
+		{"../other", "", true},
+		{"💥", "", true},
+	}
+	for _, test := range tests {
+		got, err := ParseHerdrSession(test.input)
+		if (err != nil) != test.wantErr {
+			t.Fatalf("ParseHerdrSession(%q) error = %v, wantErr %v", test.input, err, test.wantErr)
+		}
+		if got != test.want {
+			t.Fatalf("ParseHerdrSession(%q) = %q, want %q", test.input, got, test.want)
+		}
+	}
+}
+
+func TestResolveHerdrSessionFromTownSettings(t *testing.T) {
+	t.Setenv(HerdrSessionEnv, "")
+	townRoot := t.TempDir()
+	settings := NewTownSettings()
+	settings.HerdrSession = "manual-workers"
+	if err := SaveTownSettings(TownSettingsPath(townRoot), settings); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolveHerdrSession(townRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "manual-workers" {
+		t.Fatalf("ResolveHerdrSession() = %q, want manual-workers", got)
+	}
+}

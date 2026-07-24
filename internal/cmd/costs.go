@@ -39,7 +39,6 @@ var (
 	digestYesterday bool
 	digestDate      string
 	digestDryRun    bool
-
 )
 
 var costsCmd = &cobra.Command{
@@ -173,8 +172,8 @@ type TranscriptMessage struct {
 
 // TranscriptMessageBody contains the message content and usage info.
 type TranscriptMessageBody struct {
-	Model string          `json:"model"`
-	Role  string          `json:"role"`
+	Model string           `json:"model"`
+	Role  string           `json:"role"`
 	Usage *TranscriptUsage `json:"usage,omitempty"`
 }
 
@@ -823,14 +822,9 @@ func extractCostFromWorkDir(workDir string) (float64, error) {
 	return calculateCost(usage), nil
 }
 
-// getTmuxSessionWorkDir gets the current working directory of a tmux session.
+// getTmuxSessionWorkDir gets the current working directory of a backend session.
 func getTmuxSessionWorkDir(session string) (string, error) {
-	cmd := tmux.BuildCommand("display-message", "-t", session, "-p", "#{pane_current_path}")
-	output, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(output)), nil
+	return tmux.NewTmux().GetPaneWorkDir(session)
 }
 
 func outputCostsJSON(output CostsOutput) error {
@@ -1091,26 +1085,20 @@ func deriveSessionName() string {
 	return ""
 }
 
-// detectCurrentTmuxSession returns the current tmux session name if running inside tmux.
-// Uses `tmux display-message -p '#S'` which prints the session name.
-// Note: TMUX_PANE may not be inherited when Claude Code runs bash commands,
-// so we return "" as a safe fallback.
+// detectCurrentTmuxSession returns the current logical Town session name.
 func detectCurrentTmuxSession() string {
-	pane := os.Getenv("TMUX_PANE")
-	if pane == "" {
+	if !tmux.IsInsideSession() {
 		return ""
 	}
-	cmd := tmux.BuildCommand("display-message", "-t", pane, "-p", "#S")
-	output, err := cmd.Output()
+	sessionName, err := tmux.NewTmux().ResolveCurrentSession()
 	if err != nil {
 		return ""
 	}
 
-	session := strings.TrimSpace(string(output))
 	// Only return if it looks like a Gas Town session
 	// Accept both gt- (rig sessions) and hq- (town-level sessions like hq-mayor)
-	if strings.HasPrefix(session, constants.SessionPrefix) || strings.HasPrefix(session, constants.HQSessionPrefix) {
-		return session
+	if strings.HasPrefix(sessionName, constants.SessionPrefix) || strings.HasPrefix(sessionName, constants.HQSessionPrefix) {
+		return sessionName
 	}
 	return ""
 }
@@ -1404,4 +1392,3 @@ func deleteSessionCostEntries(targetDate time.Time) (int, error) {
 
 	return deletedCount, nil
 }
-

@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeRunner struct {
@@ -74,6 +75,19 @@ func TestCreateUsesOpaqueIDsAndPersistsMapping(t *testing.T) {
 	}
 	if paneID != "pane:opaque" {
 		t.Fatalf("PaneID() = %q, want pane:opaque", paneID)
+	}
+	sessionName, err := client.SessionForPane("pane:opaque")
+	if err != nil {
+		t.Fatalf("SessionForPane() error = %v", err)
+	}
+	if sessionName != "gt-rig-Toast" {
+		t.Fatalf("SessionForPane() = %q, want gt-rig-Toast", sessionName)
+	}
+	if err := client.Prompt("gt-rig-Toast", "continue"); err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+	if got, want := runner.calls[2], []string{"pane", "run", "pane:opaque", "continue"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Prompt() args = %#v, want %#v", got, want)
 	}
 }
 
@@ -200,5 +214,89 @@ func TestTownSessionNameIsStableAndPathScoped(t *testing.T) {
 	otherRoot := filepath.Join(t.TempDir(), "My Town")
 	if first == TownSessionName(otherRoot) {
 		t.Fatalf("same basename produced colliding session name %q", first)
+	}
+}
+
+func TestRestartPaneCreatesReplacementBeforeClosingOldTab(t *testing.T) {
+	runner := &fakeRunner{responses: [][]byte{
+		[]byte(`{"result":{"tab":{"tab_id":"tab-old"},"root_pane":{"pane_id":"pane-old"}}}`),
+		nil,
+		[]byte(`{"result":{"tab":{"tab_id":"tab-new"},"root_pane":{"pane_id":"pane-new"}}}`),
+		nil,
+		nil,
+	}}
+	client := NewClient(runner, t.TempDir(), "workspace-1")
+	if err := client.Create("hq-mayor", "/old", "claude", map[string]string{"GT_ROLE": "mayor"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := client.RestartPane("pane-old", "/new", "claude --resume"); err != nil {
+		t.Fatalf("RestartPane() error = %v", err)
+	}
+	wantCreate := []string{
+		"tab", "create", "--workspace", "workspace-1", "--cwd", "/new",
+		"--label", "hq-mayor", "--no-focus", "--env", "GT_ROLE=mayor",
+	}
+	if !reflect.DeepEqual(runner.calls[2], wantCreate) {
+		t.Fatalf("replacement create args = %#v, want %#v", runner.calls[2], wantCreate)
+	}
+	if got := runner.calls[3]; !reflect.DeepEqual(got, []string{"pane", "run", "pane-new", "claude --resume"}) {
+		t.Fatalf("replacement run args = %#v", got)
+	}
+	if got := runner.calls[4]; !reflect.DeepEqual(got, []string{"tab", "close", "tab-old"}) {
+		t.Fatalf("old tab close args = %#v", got)
+	}
+	paneID, err := client.PaneID("hq-mayor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paneID != "pane-new" {
+		t.Fatalf("PaneID() = %q, want pane-new", paneID)
+	}
+}
+
+func TestHasPrunesManuallyClosedPaneMapping(t *testing.T) {
+	runner := &fakeRunner{
+		responses: [][]byte{
+			[]byte(`{"result":{"tab":{"tab_id":"tab-1"},"root_pane":{"pane_id":"pane-1"}}}`),
+			nil,
+			nil,
+		},
+		errs: []error{nil, nil, errors.New("pane not found")},
+	}
+	client := NewClient(runner, t.TempDir(), "workspace-1")
+	if err := client.Create("hq-clerk", "/town/clerk", "claude", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	running, err := client.Has("hq-clerk")
+	if err != nil {
+		t.Fatalf("Has() error = %v", err)
+	}
+	if running {
+		t.Fatal("Has() = true for missing pane")
+	}
+	if _, err := client.PaneID("hq-clerk"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("PaneID() error = %v, want ErrSessionNotFound", err)
+	}
+}
+
+func TestWaitReadyPollsPaneStatusWithoutUnsupportedAgentWait(t *testing.T) {
+	runner := &fakeRunner{responses: [][]byte{
+		[]byte(`{"result":{"tab":{"tab_id":"tab-1"},"root_pane":{"pane_id":"pane-1"}}}`),
+		nil,
+		[]byte(`{"result":{"pane":{"pane_id":"pane-1","agent_status":"idle"}}}`),
+	}}
+	client := NewClient(runner, t.TempDir(), "workspace-1")
+	if err := client.Create("hq-mayor", "/town/mayor", "claude", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := client.WaitReady("hq-mayor", time.Second); err != nil {
+		t.Fatalf("WaitReady() error = %v", err)
+	}
+	want := []string{"pane", "get", "pane-1"}
+	if got := runner.calls[2]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("WaitReady() args = %#v, want %#v", got, want)
 	}
 }

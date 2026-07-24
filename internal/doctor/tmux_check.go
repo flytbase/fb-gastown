@@ -30,6 +30,10 @@ func NewLinkedPaneCheck() *LinkedPaneCheck {
 
 // Run checks for linked panes across Gas Town tmux sessions.
 func (c *LinkedPaneCheck) Run(ctx *CheckContext) *CheckResult {
+	if usesHerdrBackend(ctx) {
+		return skippedForHerdr(c.Name())
+	}
+
 	t := tmux.NewTmux()
 
 	sessions, err := t.ListSessions()

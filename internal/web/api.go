@@ -1756,75 +1756,40 @@ func (h *APIHandler) handleCrew(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// detectCrewState determines crew member state from tmux session.
+// detectCrewState determines crew member state from the selected backend session.
 // Returns: state (spinning/finished/questions/ready), lastActive string, session status
 func (h *APIHandler) detectCrewState(ctx context.Context, sessionName, hook string) (string, string, string) {
-	// Check if tmux session exists and get activity
-	cmd := tmux.BuildCommandContext(ctx, "list-sessions", "-F", "#{session_name}|#{window_activity}|#{session_attached}")
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
-		// tmux not running - crew is ready (no session)
+	_ = ctx
+	t := tmux.NewTmux()
+	exists, err := t.HasSession(sessionName)
+	if err != nil || !exists {
 		return "ready", "", "none"
 	}
 
-	// Find our session
-	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	for _, line := range lines {
-		parts := strings.Split(line, "|")
-		if len(parts) < 3 || parts[0] != sessionName {
-			continue
-		}
-
-		// Found session
-		var activityUnix int64
-		if _, err := fmt.Sscanf(parts[1], "%d", &activityUnix); err != nil {
-			continue
-		}
-		attached := parts[2] == "1"
-
-		sessionStatus := "detached"
-		if attached {
-			sessionStatus = "attached"
-		}
-
-		// Calculate activity age
-		activityAge := time.Since(time.Unix(activityUnix, 0))
-		lastActive := formatTimestamp(time.Unix(activityUnix, 0))
-
-		// Check if Claude is running in the session
-		isClaudeRunning := h.isClaudeRunningInSession(ctx, sessionName)
-
-		// Determine state based on activity and Claude status
-		state := determineCrewState(activityAge, isClaudeRunning, hook)
-
-		// Check for questions if state is potentially finished
-		if state == "finished" || (state == "ready" && hook != "") {
-			if h.hasQuestionInPane(ctx, sessionName) {
-				state = "questions"
-			}
-		}
-
-		return state, lastActive, sessionStatus
+	activity, err := t.GetSessionActivity(sessionName)
+	if err != nil {
+		activity = time.Now()
+	}
+	info, _ := t.GetSessionInfo(sessionName)
+	sessionStatus := "detached"
+	if info != nil && info.Attached {
+		sessionStatus = "attached"
 	}
 
-	// Session not found
-	return "ready", "", "none"
+	state := determineCrewState(time.Since(activity), h.isClaudeRunningInSession(ctx, sessionName), hook)
+	if state == "finished" || (state == "ready" && hook != "") {
+		if h.hasQuestionInPane(ctx, sessionName) {
+			state = "questions"
+		}
+	}
+
+	return state, formatTimestamp(activity), sessionStatus
 }
 
 // isClaudeRunningInSession checks if Claude/agent is actively running.
 func (h *APIHandler) isClaudeRunningInSession(ctx context.Context, sessionName string) bool {
-	// Target pane 0 explicitly (:0.0) to avoid false positives from
-	// user-created split panes running shells or other commands.
-	cmd := exec.CommandContext(ctx, "tmux", "display-message", "-t", sessionName+":0.0", "-p", "#{pane_current_command}")
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
-		return false
-	}
-
-	output := strings.TrimSpace(stdout.String())
-	return paneCurrentCommandIsAgent(output)
+	_ = ctx
+	return tmux.NewTmux().IsAgentAlive(sessionName)
 }
 
 // paneCurrentCommandIsAgent returns true if tmux #{pane_current_command} names a known
@@ -1846,15 +1811,14 @@ func paneCurrentCommandIsAgent(output string) bool {
 
 // hasQuestionInPane checks the last output for question indicators.
 func (h *APIHandler) hasQuestionInPane(ctx context.Context, sessionName string) bool {
-	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", sessionName, "-p", "-J")
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
+	_ = ctx
+	output, err := tmux.NewTmux().CapturePaneAll(sessionName)
+	if err != nil {
 		return false
 	}
 
 	// Get last few lines
-	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	lines := strings.Split(strings.TrimSpace(output), "\n")
 	lastLines := ""
 	if len(lines) > 10 {
 		lastLines = strings.Join(lines[len(lines)-10:], "\n")
@@ -1986,7 +1950,7 @@ type SessionPreviewResponse struct {
 	Timestamp string `json:"timestamp"`
 }
 
-// handleSessionPreview returns the last N lines of tmux capture-pane output for a session.
+// handleSessionPreview returns the last N lines from the selected backend session.
 func (h *APIHandler) handleSessionPreview(w http.ResponseWriter, r *http.Request) {
 	sessionName := r.URL.Query().Get("session")
 	if sessionName == "" {
@@ -2007,29 +1971,16 @@ func (h *APIHandler) handleSessionPreview(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Run tmux capture-pane to get the last 30 lines
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", sessionName, "-p", "-J", "-S", "-30")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
+	content, err := tmux.NewTmux().CapturePane(sessionName, 30)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			h.sendError(w, "tmux capture-pane timed out", http.StatusGatewayTimeout)
-			return
-		}
-		h.sendError(w, "Failed to capture pane: "+stderr.String(), http.StatusInternalServerError)
+		h.sendError(w, "Failed to capture backend pane: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(SessionPreviewResponse{
 		Session:   sessionName,
-		Content:   stdout.String(),
+		Content:   content,
 		Timestamp: time.Now().Format(time.RFC3339),
 	})
 }

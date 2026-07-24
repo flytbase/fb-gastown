@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/session"
@@ -82,6 +81,8 @@ func resolveSelfTarget() (agentID string, pane string, hookRoot string, err erro
 	switch roleInfo.Role {
 	case RoleMayor:
 		agentID = "mayor/"
+	case RoleClerk:
+		agentID = "clerk/"
 	case RoleDeacon:
 		agentID = "deacon/"
 	case RoleBoot:
@@ -100,7 +101,13 @@ func resolveSelfTarget() (agentID string, pane string, hookRoot string, err erro
 		return "", "", "", fmt.Errorf("cannot determine agent identity (role: %s)", roleInfo.Role)
 	}
 
-	pane = os.Getenv("TMUX_PANE")
+	currentSession, sessionErr := getCurrentTmuxSession()
+	if sessionErr == nil && currentSession != "" {
+		pane, err = tmux.NewTmux().GetPaneID(currentSession)
+		if err != nil {
+			return "", "", "", fmt.Errorf("getting current backend pane: %w", err)
+		}
+	}
 	hookRoot = roleInfo.Home
 	if hookRoot == "" {
 		// Fallback to git root if home not determined
@@ -115,12 +122,12 @@ func resolveSelfTarget() (agentID string, pane string, hookRoot string, err erro
 
 // ResolveTargetOptions controls target resolution behavior.
 type ResolveTargetOptions struct {
-	DryRun   bool
-	Force    bool
-	Create   bool
-	Account  string
-	Agent    string
-	NoBoot   bool
+	DryRun     bool
+	Force      bool
+	Create     bool
+	Account    string
+	Agent      string
+	NoBoot     bool
 	HookBead   string // Bead ID to set atomically during polecat spawn (empty = skip)
 	BeadID     string // For cross-rig guard checks (empty = skip guard)
 	TownRoot   string

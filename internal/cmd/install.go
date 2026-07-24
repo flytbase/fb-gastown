@@ -47,6 +47,7 @@ var (
 	installSupervisor     bool
 	installDoltPort       int
 	installSessionBackend string
+	installHerdrSession   string
 )
 
 var installCmd = &cobra.Command{
@@ -76,6 +77,7 @@ Examples:
   gt install ~/gt --github=user/repo --public  # Create public GitHub repo
   gt install ~/gt --shell                      # Install shell integration (sets GT_TOWN_ROOT/GT_RIG)
   gt install ~/gt --session-backend herdr      # Use Herdr instead of tmux for all agent sessions
+  gt install ~/gt --session-backend herdr --herdr-session current
   gt install ~/gt --supervisor                 # Configure launchd/systemd for daemon auto-restart`,
 	Args:         cobra.MaximumNArgs(1),
 	RunE:         runInstall,
@@ -96,6 +98,7 @@ func init() {
 	installCmd.Flags().BoolVar(&installSupervisor, "supervisor", false, "Configure launchd/systemd for daemon auto-restart")
 	installCmd.Flags().IntVar(&installDoltPort, "dolt-port", 0, "Dolt SQL server port (default 3307; set when another instance owns the default port)")
 	installCmd.Flags().StringVar(&installSessionBackend, "session-backend", "", "Town-wide session backend: tmux (default) or herdr")
+	installCmd.Flags().StringVar(&installHerdrSession, "herdr-session", "", "Herdr session: current, managed, or an existing named session")
 	rootCmd.AddCommand(installCmd)
 }
 
@@ -139,6 +142,26 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			if _, err := exec.LookPath("herdr"); err != nil {
 				return fmt.Errorf("Herdr session backend selected but herdr is not installed or not on PATH")
 			}
+		}
+	}
+	requestedHerdrSession := ""
+	if cmd.Flags().Changed("herdr-session") {
+		if requestedBackend != "" && requestedBackend != config.SessionBackendHerdr {
+			return fmt.Errorf("--herdr-session requires --session-backend herdr")
+		}
+		if requestedBackend == "" {
+			requestedBackend = config.SessionBackendHerdr
+		}
+		requestedHerdrSession = strings.TrimSpace(installHerdrSession)
+		if strings.EqualFold(requestedHerdrSession, "current") {
+			requestedHerdrSession = strings.TrimSpace(os.Getenv("HERDR_SESSION"))
+			if requestedHerdrSession == "" || os.Getenv("HERDR_ENV") != "1" {
+				return fmt.Errorf("--herdr-session current must be run inside the Herdr session the Town should join")
+			}
+		}
+		requestedHerdrSession, err = config.ParseHerdrSession(requestedHerdrSession)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -287,12 +310,23 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		townSettings.SessionBackend = config.SessionBackendTmux
 		settingsChanged = true
 	}
+	if cmd.Flags().Changed("herdr-session") && townSettings.HerdrSession != requestedHerdrSession {
+		townSettings.HerdrSession = requestedHerdrSession
+		settingsChanged = true
+	}
 	if _, statErr := os.Stat(settingsPath); os.IsNotExist(statErr) || settingsChanged {
 		if err := config.SaveTownSettings(settingsPath, townSettings); err != nil {
 			return fmt.Errorf("saving Town session backend: %w", err)
 		}
 	}
 	fmt.Printf("   ✓ Session backend: %s\n", config.SessionBackendFromSettings(townSettings))
+	if config.SessionBackendFromSettings(townSettings) == config.SessionBackendHerdr {
+		herdrSession := townSettings.HerdrSession
+		if herdrSession == "" {
+			herdrSession = "managed"
+		}
+		fmt.Printf("   ✓ Herdr session: %s\n", herdrSession)
+	}
 
 	// Create rigs.json in mayor/ (only if it doesn't already exist).
 	// Re-running install must NOT clobber existing rig registrations.

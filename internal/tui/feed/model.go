@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/herdr"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/util"
 )
@@ -602,7 +603,7 @@ func (m *Model) getSelectedProblemAgent() *ProblemAgent {
 	return nil
 }
 
-// attachToSelected attaches to the selected agent's tmux session
+// attachToSelected focuses the selected agent in the Town session backend.
 func (m *Model) attachToSelected() (tea.Model, tea.Cmd) {
 	agent := m.getSelectedProblemAgent()
 	if agent == nil {
@@ -610,6 +611,16 @@ func (m *Model) attachToSelected() (tea.Model, tea.Cmd) {
 	}
 	// Exit TUI and switch to/attach tmux session
 	m.closeOnce.Do(func() { close(m.done) })
+	if herdr.Enabled() {
+		return m, tea.Sequence(
+			tea.ExitAltScreen,
+			func() tea.Msg {
+				_ = tmux.NewTmux().SwitchClient(agent.SessionID)
+				return tea.Quit()
+			},
+		)
+	}
+
 	var c *exec.Cmd
 	if tmux.IsInSameSocket() {
 		// Same tmux socket: switch the current client to the target session

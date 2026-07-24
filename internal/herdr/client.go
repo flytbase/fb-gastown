@@ -31,6 +31,7 @@ const (
 
 	serverStartTimeout = 10 * time.Second
 	serverPollInterval = 100 * time.Millisecond
+	readyPollInterval  = 100 * time.Millisecond
 )
 
 var (
@@ -125,6 +126,7 @@ type Client struct {
 	workspaceID string
 	sessionName string
 	autoStart   bool
+	ownsServer  bool
 	now         func() time.Time
 	mu          sync.Mutex
 	workspaceMu sync.Mutex
@@ -142,10 +144,9 @@ func NewFromEnvironment() (*Client, error) {
 
 // NewFromEnvironmentWithTownRoot creates a client for management commands
 // which have already resolved the Town from the current directory. Every call
-// targets a deterministic Town-specific named Herdr session, preventing a
-// command launched from an unrelated Herdr UI from splitting Town agents
-// across servers. The headless server starts lazily when the first agent
-// session is created.
+// targets either the Town's explicitly bound named Herdr session or a
+// deterministic Town-owned session. The server starts lazily when the first
+// agent session is created.
 func NewFromEnvironmentWithTownRoot(townRoot string) (*Client, error) {
 	townRoot = strings.TrimSpace(townRoot)
 	if townRoot == "" {
@@ -160,7 +161,14 @@ func NewFromEnvironmentWithTownRoot(townRoot string) (*Client, error) {
 		return nil, fmt.Errorf("%w: herdr executable not found: %v", ErrUnavailable, err)
 	}
 
-	sessionName := TownSessionName(townRoot)
+	sessionName, err := config.ResolveHerdrSession(townRoot)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	ownsServer := sessionName == ""
+	if ownsServer {
+		sessionName = TownSessionName(townRoot)
+	}
 	client := NewClient(execRunner{
 		binary:      resolvedBinary,
 		prefix:      []string{"--session", sessionName},
@@ -168,6 +176,7 @@ func NewFromEnvironmentWithTownRoot(townRoot string) (*Client, error) {
 	}, townRoot, "")
 	client.sessionName = sessionName
 	client.autoStart = true
+	client.ownsServer = ownsServer
 	return client, nil
 }
 
@@ -326,7 +335,9 @@ func (c *Client) ensureWorkspace() (string, error) {
 
 	var storedWorkspace string
 	if err := c.withRegistry(func(state *registry) error {
-		storedWorkspace = state.WorkspaceID
+		if state.BackendSession == c.sessionName {
+			storedWorkspace = state.WorkspaceID
+		}
 		return nil
 	}); err != nil {
 		return "", err
@@ -468,7 +479,18 @@ func (c *Client) Has(name string) (bool, error) {
 		}
 		return false, err
 	}
+	if c.autoStart {
+		if err := c.ensureServer(); err != nil {
+			return false, err
+		}
+	}
 	if _, err := c.runner.Run("pane", "get", session.PaneID); err != nil {
+		if registryErr := c.withRegistry(func(state *registry) error {
+			delete(state.Sessions, name)
+			return nil
+		}); registryErr != nil {
+			return false, registryErr
+		}
 		return false, nil
 	}
 	return true, nil
@@ -483,8 +505,17 @@ func (c *Client) Close(name string) error {
 		}
 		return err
 	}
+	if c.autoStart {
+		if err := c.ensureServer(); err != nil {
+			return err
+		}
+	}
 	if _, err := c.runner.Run("tab", "close", session.TabID); err != nil {
-		return err
+		// A manually closed tab is already stopped. Prune its stale mapping;
+		// preserve the error only when the pane still exists.
+		if _, paneErr := c.runner.Run("pane", "get", session.PaneID); paneErr == nil {
+			return err
+		}
 	}
 	return c.withRegistry(func(state *registry) error {
 		delete(state.Sessions, name)
@@ -499,6 +530,22 @@ func (c *Client) PaneID(name string) (string, error) {
 		return "", err
 	}
 	return session.PaneID, nil
+}
+
+// SessionForPane resolves an opaque Herdr pane ID back to its stable Gas Town
+// logical session name.
+func (c *Client) SessionForPane(paneID string) (string, error) {
+	var name string
+	err := c.withRegistry(func(state *registry) error {
+		for sessionName, session := range state.Sessions {
+			if session.PaneID == paneID {
+				name = sessionName
+				return nil
+			}
+		}
+		return fmt.Errorf("%w: pane %s", ErrSessionNotFound, paneID)
+	})
+	return name, err
 }
 
 // Get returns live pane metadata.
@@ -543,7 +590,9 @@ func (c *Client) Prompt(name, message string) error {
 	if err != nil {
 		return err
 	}
-	_, err = c.runner.Run("agent", "prompt", session.PaneID, message)
+	// pane run is Herdr's atomic text-plus-Enter operation for both initial
+	// commands and follow-up prompts.
+	_, err = c.runner.Run("pane", "run", session.PaneID, message)
 	if err == nil {
 		_ = c.touch(name)
 	}
@@ -561,24 +610,119 @@ func (c *Client) SendKeys(name string, keys ...string) error {
 	return err
 }
 
-// WaitReady waits until Herdr observes a usable agent lifecycle state.
-func (c *Client) WaitReady(name string, timeout time.Duration) error {
-	session, err := c.lookup(name)
+// RestartPane replaces the tab that owns paneID and runs command in a fresh
+// shell. Creating the replacement before closing the old tab makes self-handoff
+// safe: the new session exists before Herdr terminates the caller's tab.
+func (c *Client) RestartPane(paneID, workDir, command string) error {
+	var previous Session
+	if err := c.withRegistry(func(state *registry) error {
+		for _, session := range state.Sessions {
+			if session.PaneID == paneID {
+				previous = session
+				return nil
+			}
+		}
+		return fmt.Errorf("%w: pane %s", ErrSessionNotFound, paneID)
+	}); err != nil {
+		return err
+	}
+	if workDir == "" {
+		workDir = previous.WorkDir
+	}
+	oldTabID := previous.TabID
+	workspaceID, err := c.ensureWorkspace()
 	if err != nil {
 		return err
 	}
-	timeoutMS := timeout.Milliseconds()
-	if timeoutMS < 1 {
-		timeoutMS = 1
+
+	args := []string{
+		"tab", "create",
+		"--workspace", workspaceID,
+		"--cwd", workDir,
+		"--label", previous.Name,
+		"--no-focus",
 	}
-	_, err = c.runner.Run(
-		"agent", "wait", session.PaneID,
-		"--until", "idle",
-		"--until", "done",
-		"--until", "working",
-		"--timeout", strconv.FormatInt(timeoutMS, 10),
-	)
+	keys := make([]string, 0, len(previous.Env))
+	for key := range previous.Env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		args = append(args, "--env", key+"="+previous.Env[key])
+	}
+	out, err := c.runner.Run(args...)
+	if err != nil {
+		return err
+	}
+	var created tabCreateEnvelope
+	if err := json.Unmarshal(out, &created); err != nil {
+		return fmt.Errorf("decoding replacement Herdr tab: %w", err)
+	}
+	newPaneID := created.Result.RootPane.PaneID
+	newTabID := created.Result.Tab.TabID
+	if newPaneID == "" || newTabID == "" {
+		return fmt.Errorf("replacement Herdr tab returned empty pane or tab id")
+	}
+	if _, err := c.runner.Run("pane", "run", newPaneID, command); err != nil {
+		_, _ = c.runner.Run("tab", "close", newTabID)
+		return fmt.Errorf("starting replacement Herdr command: %w", err)
+	}
+
+	now := c.now().UTC()
+	if err := c.withRegistry(func(state *registry) error {
+		current, ok := state.Sessions[previous.Name]
+		if !ok || current.PaneID != paneID {
+			return fmt.Errorf("Herdr session changed during restart: %s", previous.Name)
+		}
+		previous.PaneID = newPaneID
+		previous.TabID = newTabID
+		previous.WorkDir = workDir
+		previous.LastActivity = now
+		state.Sessions[previous.Name] = previous
+		return nil
+	}); err != nil {
+		_, _ = c.runner.Run("tab", "close", newTabID)
+		return err
+	}
+
+	_, err = c.runner.Run("tab", "close", oldTabID)
 	return err
+}
+
+// WaitReady waits until Herdr observes a usable agent lifecycle state.
+func (c *Client) WaitReady(name string, timeout time.Duration) error {
+	if timeout < time.Millisecond {
+		timeout = time.Millisecond
+	}
+	deadline := time.Now().Add(timeout)
+	var lastStatus string
+	var lastErr error
+
+	for {
+		pane, err := c.Get(name)
+		if err == nil {
+			lastStatus = pane.AgentStatus
+			switch pane.AgentStatus {
+			case "idle", "done", "working":
+				return nil
+			}
+		} else {
+			lastErr = err
+		}
+
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			if lastErr != nil {
+				return fmt.Errorf("waiting for Herdr agent readiness: %w", lastErr)
+			}
+			return fmt.Errorf("waiting for Herdr agent readiness: timed out in status %q", lastStatus)
+		}
+		sleepFor := readyPollInterval
+		if remaining < sleepFor {
+			sleepFor = remaining
+		}
+		time.Sleep(sleepFor)
+	}
 }
 
 // IsAlive reports whether the pane exists and Herdr still recognizes its state.
@@ -668,6 +812,11 @@ func (c *Client) List() ([]string, error) {
 		sort.Strings(names)
 		return nil
 	})
+	if err == nil && len(names) > 0 && c.autoStart {
+		if serverErr := c.ensureServer(); serverErr != nil {
+			return nil, serverErr
+		}
+	}
 	return names, err
 }
 
@@ -688,6 +837,9 @@ func (c *Client) Attach(name string) error {
 		return err
 	}
 	if os.Getenv("HERDR_ENV") == "1" {
+		if current := strings.TrimSpace(os.Getenv("HERDR_SESSION")); current != "" && current != c.sessionName {
+			return fmt.Errorf("Gas Town is bound to Herdr session %q, but this shell is inside %q; attach from a shell outside Herdr", c.sessionName, current)
+		}
 		return nil
 	}
 	attacher, ok := c.runner.(sessionAttacher)
@@ -697,10 +849,13 @@ func (c *Client) Attach(name string) error {
 	return attacher.Attach()
 }
 
-// StopServer stops the Town-owned named Herdr server. A client that was
-// created inside an existing Herdr workspace does not own that server.
+// StopServer stops only a Town-owned named Herdr server. A Town bound to an
+// existing shared session must never stop that server or its manual workers.
 func (c *Client) StopServer() error {
-	if c.sessionName == "" {
+	if c.sessionName == "" || !c.ownsServer {
+		return nil
+	}
+	if _, err := c.runner.Run("workspace", "list"); err != nil {
 		return nil
 	}
 	_, err := c.runner.Run("server", "stop")

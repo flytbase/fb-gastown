@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -460,19 +459,24 @@ func injectStartPrompt(pane, beadID, subject, args string) error {
 	return t.NudgePane(pane, prompt)
 }
 
-// getSessionFromPane extracts session name from a pane target.
+// getSessionFromPane extracts a logical session name from a backend pane target.
 // Pane targets can be:
 // - "%9" (pane ID) - need to query tmux for session
 // - "gt-rig-name:0.0" (session:window.pane) - extract session name
 func getSessionFromPane(pane string) string {
-	if strings.HasPrefix(pane, "%") {
-		// Pane ID format - query tmux for the session
-		cmd := tmux.BuildCommand("display-message", "-t", pane, "-p", "#{session_name}")
-		out, err := cmd.Output()
+	if os.Getenv(config.SessionBackendEnv) == config.SessionBackendHerdr {
+		name, err := tmux.NewTmux().GetSessionFromPane(pane)
 		if err != nil {
 			return ""
 		}
-		return strings.TrimSpace(string(out))
+		return name
+	}
+	if strings.HasPrefix(pane, "%") {
+		name, err := tmux.NewTmux().GetSessionFromPane(pane)
+		if err != nil {
+			return ""
+		}
+		return name
 	}
 	// Session:window.pane format - extract session name
 	if idx := strings.Index(pane, ":"); idx > 0 {
@@ -543,13 +547,9 @@ func ensureAgentReady(sessionName string) error {
 	return nil
 }
 
-// isSessionYoung returns true if the tmux session was created less than maxAge ago.
+// isSessionYoung returns true if the backend session was created less than maxAge ago.
 func isSessionYoung(sessionName string, maxAge time.Duration) bool {
-	out, err := tmux.BuildCommand("display-message", "-t", sessionName, "-p", "#{session_created}").Output()
-	if err != nil {
-		return false
-	}
-	createdUnix, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	createdUnix, err := tmux.NewTmux().GetSessionCreatedUnix(sessionName)
 	if err != nil {
 		return false
 	}

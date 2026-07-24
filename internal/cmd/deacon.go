@@ -53,9 +53,9 @@ var deaconStartCmd = &cobra.Command{
 	Use:     "start",
 	Aliases: []string{"spawn"},
 	Short:   "Start the Deacon session",
-	Long: `Start the Deacon tmux session.
+	Long: `Start the Deacon terminal session.
 
-Creates a new detached tmux session for the Deacon and launches Claude.
+Creates a session using the Town's selected backend and launches the configured agent.
 The session runs in the workspace root directory.`,
 	RunE: runDeaconStart,
 }
@@ -63,9 +63,9 @@ The session runs in the workspace root directory.`,
 var deaconStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the Deacon session",
-	Long: `Stop the Deacon tmux session.
+	Long: `Stop the Deacon terminal session.
 
-Attempts graceful shutdown first (Ctrl-C), then kills the tmux session.`,
+Attempts graceful shutdown first, then closes the backend session.`,
 	RunE: runDeaconStop,
 }
 
@@ -73,19 +73,18 @@ var deaconAttachCmd = &cobra.Command{
 	Use:     "attach",
 	Aliases: []string{"at"},
 	Short:   "Attach to the Deacon session",
-	Long: `Attach to the running Deacon tmux session.
+	Long: `Attach to the running Deacon session.
 
-Attaches the current terminal to the Deacon's tmux session.
-Detach with Ctrl-B D.`,
+Uses the Town's selected tmux or Herdr backend.`,
 	RunE: runDeaconAttach,
 }
 
 var deaconStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Check Deacon session status",
-	Long: `Check if the Deacon tmux session is currently running.
+	Long: `Check if the Deacon terminal session is currently running.
 
-Shows whether the Deacon has an active tmux session and reports
+Shows whether the Deacon has an active session and reports
 its session name. The Deacon is the town-level watchdog that
 receives heartbeats from the daemon.
 
@@ -97,7 +96,7 @@ Examples:
 var deaconRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Restart the Deacon session",
-	Long: `Restart the Deacon tmux session.
+	Long: `Restart the Deacon terminal session.
 
 Stops the current session (if running) and starts a fresh one.`,
 	RunE: runDeaconRestart,

@@ -153,6 +153,9 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 	if backend := strings.TrimSpace(os.Getenv(SessionBackendEnv)); backend != "" {
 		env[SessionBackendEnv] = backend
 	}
+	if herdrSession := strings.TrimSpace(os.Getenv(HerdrSessionEnv)); herdrSession != "" {
+		env[HerdrSessionEnv] = herdrSession
+	}
 
 	// Only set GT_ROOT if provided
 	// Empty values would override tmux session environment

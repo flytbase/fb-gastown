@@ -127,7 +127,7 @@ Federated work coordination network linking Gas Towns through DoltHub. Rigs post
 - **Dolt 1.82.4+** - `brew install dolt` on macOS, or see [github.com/dolthub/dolt](https://github.com/dolthub/dolt)
 - **beads (bd) 0.55.4+** - installed by `brew install gastown`, or see [github.com/steveyegge/beads](https://github.com/steveyegge/beads)
 - **sqlite3** - for convoy database queries (usually pre-installed on macOS/Linux)
-- **tmux 3.0+** - recommended for full experience
+- **tmux 3.0+ or Herdr** - terminal session backend (tmux is the default)
 - **Claude Code CLI** (default runtime) - [claude.ai/code](https://claude.ai/code)
 - **Codex CLI** (optional runtime) - [developers.openai.com/codex/cli](https://developers.openai.com/codex/cli)
 - **GitHub Copilot CLI** (optional runtime) - [cli.github.com](https://cli.github.com) (requires Copilot seat)
@@ -156,6 +156,9 @@ export PATH="$PATH:$HOME/go/bin"
 
 # Create workspace with git initialization
 gt install ~/gt --git
+
+# Or select Herdr as the Town-wide session backend
+gt install ~/gt --git --session-backend herdr
 cd ~/gt
 
 # Add your first project

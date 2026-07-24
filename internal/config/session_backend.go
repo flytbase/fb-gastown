@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -11,6 +12,10 @@ const (
 	// process tree. Gas Town sets it after resolving settings so child agents
 	// and the daemon inherit one consistent transport.
 	SessionBackendEnv = "GT_SESSION_BACKEND"
+
+	// HerdrSessionEnv pins all Gas Town processes to the same named Herdr
+	// session. It contains a concrete name; "current" is only a CLI selector.
+	HerdrSessionEnv = "GT_HERDR_SESSION"
 
 	SessionBackendTmux  = "tmux"
 	SessionBackendHerdr = "herdr"
@@ -56,4 +61,33 @@ func SessionBackendFromSettings(settings *TownSettings) string {
 		return SessionBackendTmux
 	}
 	return backend
+}
+
+// ResolveHerdrSession returns an explicitly bound named Herdr session.
+// Empty means the Herdr adapter should use its deterministic Town-owned name.
+func ResolveHerdrSession(townRoot string) (string, error) {
+	if value := strings.TrimSpace(os.Getenv(HerdrSessionEnv)); value != "" {
+		return ParseHerdrSession(value)
+	}
+	settings, err := LoadOrCreateTownSettings(TownSettingsPath(townRoot))
+	if err != nil {
+		return "", fmt.Errorf("loading Town Herdr session: %w", err)
+	}
+	return ParseHerdrSession(settings.HerdrSession)
+}
+
+// ParseHerdrSession validates a concrete named-session binding. Empty and
+// "managed" both select the deterministic Town-owned Herdr session.
+func ParseHerdrSession(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.EqualFold(value, "managed") {
+		return "", nil
+	}
+	if strings.EqualFold(value, "current") {
+		return "", fmt.Errorf("%q is a selector, not a concrete Herdr session name", value)
+	}
+	if !regexp.MustCompile(`^[A-Za-z0-9._-]+$`).MatchString(value) || value == "." || value == ".." {
+		return "", fmt.Errorf("invalid Herdr session name %q (use ASCII letters, numbers, '.', '_', or '-')", value)
+	}
+	return value, nil
 }

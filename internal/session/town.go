@@ -21,6 +21,7 @@ type TownSession struct {
 // otherwise Boot will try to restart Deacon.
 func TownSessions() []TownSession {
 	return []TownSession{
+		{"Feed", FeedSessionName()},
 		{"Clerk", ClerkSessionName()},
 		{"Mayor", MayorSessionName()},
 		{"Boot", BootSessionName()},

@@ -188,30 +188,26 @@ func runHandoff(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Use a socket-aware Tmux for pane operations. The calling process may be
-	// on a different tmux server than the town socket (e.g., default socket).
-	// For self-handoff, pane operations (clear-history, respawn-pane) must target
-	// the caller's own server. SocketFromEnv() reads $TMUX to find the right one.
-	callerSocket := tmux.SocketFromEnv()
-	t := tmux.NewTmuxWithSocket(callerSocket)
+	// Use the selected Town backend. Tmux callers may be on a different socket
+	// than the Town; Herdr callers always use the Town-scoped adapter.
+	t := currentSessionTransport()
 	// Town-socket Tmux for session-level queries (getSessionPane, etc.)
 	townTmux := tmux.NewTmux()
 	_ = townTmux // used later for remote handoff
 
-	// Verify we're in tmux
-	if !tmux.IsInsideTmux() {
-		return fmt.Errorf("not running in tmux - cannot hand off")
+	// Verify we're inside the selected Town session backend.
+	if !tmux.IsInsideSession() {
+		return fmt.Errorf("not running in a managed Town session - cannot hand off")
 	}
 
-	pane := os.Getenv("TMUX_PANE")
-	if pane == "" {
-		return fmt.Errorf("TMUX_PANE not set - cannot hand off")
-	}
-
-	// Get current session name from GT_ROLE (preferred) or tmux display-message.
+	// Get current logical session name, then resolve its backend pane.
 	currentSession, err := getCurrentTmuxSession()
 	if err != nil {
 		return fmt.Errorf("getting session name: %w", err)
+	}
+	pane, err := t.GetPaneID(currentSession)
+	if err != nil {
+		return fmt.Errorf("getting current pane: %w", err)
 	}
 
 	// Warn if workspace has uncommitted or unpushed work (wa-7967c).
@@ -416,7 +412,7 @@ func runHandoffAuto() error {
 		_ = os.MkdirAll(runtimeDir, 0755)
 		markerPath := filepath.Join(runtimeDir, constants.FileHandoffMarker)
 		sessionName := "auto-handoff"
-		if tmux.IsInsideTmux() {
+		if tmux.IsInsideSession() {
 			if name, err := getCurrentTmuxSession(); err == nil {
 				sessionName = name
 			}
@@ -469,18 +465,10 @@ func runHandoffCycle() error {
 		message = collectHandoffState()
 	}
 
-	// Must be in tmux to respawn
-	if !tmux.IsInsideTmux() {
+	// Must be inside the selected backend to respawn.
+	if !tmux.IsInsideSession() {
 		// Fall back to auto mode (save state only) if not in tmux
-		fmt.Fprintf(os.Stderr, "handoff --cycle: not in tmux, falling back to state-save only\n")
-		handoffMessage = message
-		handoffSubject = subject
-		return runHandoffAuto()
-	}
-
-	pane := os.Getenv("TMUX_PANE")
-	if pane == "" {
-		fmt.Fprintf(os.Stderr, "handoff --cycle: TMUX_PANE not set, falling back to state-save only\n")
+		fmt.Fprintf(os.Stderr, "handoff --cycle: not in a managed Town session, falling back to state-save only\n")
 		handoffMessage = message
 		handoffSubject = subject
 		return runHandoffAuto()
@@ -494,15 +482,19 @@ func runHandoffCycle() error {
 		return runHandoffAuto()
 	}
 
-	// Use the caller's socket for pane operations (same as runHandoff).
-	callerSocket := tmux.SocketFromEnv()
-	t := tmux.NewTmuxWithSocket(callerSocket)
+	t := currentSessionTransport()
+	pane, err := t.GetPaneID(currentSession)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "handoff --cycle: could not resolve backend pane: %v, falling back to state-save only\n", err)
+		handoffMessage = message
+		handoffSubject = subject
+		return runHandoffAuto()
+	}
 
 	if handoffDryRun {
 		fmt.Printf("[cycle] Would send handoff mail: subject=%q\n", subject)
 		fmt.Printf("[cycle] Would write handoff marker\n")
-		fmt.Printf("[cycle] Would execute: tmux clear-history -t %s\n", pane)
-		fmt.Printf("[cycle] Would execute: tmux respawn-pane -k -t %s <restart-cmd>\n", pane)
+		fmt.Printf("[cycle] Would clear and restart backend pane %s\n", pane)
 		return nil
 	}
 
@@ -606,17 +598,19 @@ func getCurrentTmuxSession() (string, error) {
 		// Fall through to tmux detection if role resolution fails
 	}
 
-	// Use TMUX_PANE for targeted display-message to avoid returning an
-	// arbitrary session when multiple sessions share the town socket.
-	pane := os.Getenv("TMUX_PANE")
-	if pane == "" {
-		return "", fmt.Errorf("TMUX_PANE not set")
+	return currentSessionTransport().ResolveCurrentSession()
+}
+
+// currentSessionTransport returns a backend facade scoped to the caller. Tmux
+// needs the caller socket for self-respawn; Herdr is Town-scoped and ignores
+// tmux socket concepts entirely.
+func currentSessionTransport() *tmux.Tmux {
+	if config.SessionBackendFromSettings(&config.TownSettings{
+		SessionBackend: os.Getenv(config.SessionBackendEnv),
+	}) == config.SessionBackendHerdr {
+		return tmux.NewTmux()
 	}
-	out, err := tmux.BuildCommand("display-message", "-t", pane, "-p", "#{session_name}").Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
+	return tmux.NewTmuxWithSocket(tmux.SocketFromEnv())
 }
 
 // resolveRoleToSession converts a role name or path to a tmux session name.
@@ -1170,10 +1164,9 @@ func handoffRemoteSession(t *tmux.Tmux, targetSession, restartCmd string) error 
 
 	// Dry run mode
 	if handoffDryRun {
-		fmt.Printf("Would execute: tmux clear-history -t %s\n", targetPane)
-		fmt.Printf("Would execute: tmux respawn-pane -k -t %s %s\n", targetPane, restartCmd)
+		fmt.Printf("Would clear and restart backend pane %s with %s\n", targetPane, restartCmd)
 		if handoffWatch {
-			fmt.Printf("Would execute: tmux switch-client -t %s\n", targetSession)
+			fmt.Printf("Would focus backend session %s\n", targetSession)
 		}
 		return nil
 	}
@@ -1218,10 +1211,9 @@ func handoffRemoteSession(t *tmux.Tmux, targetSession, restartCmd string) error 
 	// If --watch, switch to that session
 	if handoffWatch {
 		fmt.Printf("Switching to %s...\n", targetSession)
-		// Use tmux switch-client to move our view to the target session
-		if err := tmux.BuildCommand("switch-client", "-t", targetSession).Run(); err != nil {
+		if err := t.SwitchClient(targetSession); err != nil {
 			// Non-fatal - they can manually switch
-			fmt.Printf("Note: Could not auto-switch (use: tmux switch-client -t %s)\n", targetSession)
+			fmt.Printf("Note: Could not auto-focus backend session %s\n", targetSession)
 		}
 	}
 
@@ -1230,16 +1222,7 @@ func handoffRemoteSession(t *tmux.Tmux, targetSession, restartCmd string) error 
 
 // getSessionPane returns the pane identifier for a session's main pane.
 func getSessionPane(sessionName string) (string, error) {
-	// Get the pane ID for the first pane in the session
-	out, err := tmux.BuildCommand("list-panes", "-t", sessionName, "-F", "#{pane_id}").Output()
-	if err != nil {
-		return "", err
-	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) == 0 || lines[0] == "" {
-		return "", fmt.Errorf("no panes found in session")
-	}
-	return lines[0], nil
+	return tmux.NewTmux().GetPaneID(sessionName)
 }
 
 // sendHandoffMail sends a handoff mail to self and auto-hooks it.

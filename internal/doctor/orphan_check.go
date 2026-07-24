@@ -296,6 +296,9 @@ func NewOrphanProcessCheck() *OrphanProcessCheck {
 
 // Run checks for runtime processes running outside tmux.
 func (c *OrphanProcessCheck) Run(ctx *CheckContext) *CheckResult {
+	if usesHerdrBackend(ctx) {
+		return skippedForHerdr(c.Name())
+	}
 	// Get list of tmux session PIDs
 	tmuxPIDs, err := c.getTmuxSessionPIDs()
 	if err != nil {

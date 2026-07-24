@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/herdr"
 	"github.com/steveyegge/gastown/internal/lock"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
@@ -438,6 +439,13 @@ type OrphanedProcess struct {
 // Additionally, processes must be older than minOrphanAge seconds to be considered
 // orphaned. This prevents race conditions with newly spawned processes.
 func FindOrphanedClaudeProcesses() ([]OrphanedProcess, error) {
+	// Herdr panes do not currently expose process-tree identifiers through the
+	// adapter. Never fall back to tmux-based protection in a Herdr Town: doing
+	// so could misclassify healthy Herdr agents as orphans.
+	if herdr.Enabled() {
+		return nil, nil
+	}
+
 	// Get PIDs belonging to valid Gas Town tmux sessions.
 	// These should not be killed even if they show TTY "?" during startup.
 	protectedPIDs := getTmuxSessionPIDs()
@@ -549,6 +557,12 @@ type ZombieProcess struct {
 // has died. Processes with a real TTY (e.g. pts/*) are skipped because those
 // are interactive terminal sessions, not zombies.
 func FindZombieClaudeProcesses() ([]ZombieProcess, error) {
+	// See FindOrphanedClaudeProcesses: skip process-level orphan scanning until
+	// the Herdr adapter can positively identify protected pane process trees.
+	if herdr.Enabled() {
+		return nil, nil
+	}
+
 	// Get ALL valid PIDs (panes + their children) from active tmux sessions
 	validPIDs := getTmuxSessionPIDs()
 

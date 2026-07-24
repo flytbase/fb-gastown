@@ -47,6 +47,7 @@ var (
 	ErrSessionRunning     = errors.New("session already running with healthy agent")
 	ErrInvalidSessionName = errors.New("invalid session name")
 	ErrIdleTimeout        = errors.New("agent not idle before timeout")
+	ErrBackendOperation   = errors.New("operation is not supported by the selected session backend")
 )
 
 // validateSessionName checks that a session name contains only safe characters.
@@ -241,6 +242,16 @@ func (t *Tmux) herdrBackend() (*herdr.Client, bool, error) {
 // All commands include -u flag for UTF-8 support regardless of locale settings.
 // See: https://github.com/steveyegge/gastown/issues/1219
 func (t *Tmux) run(args ...string) (string, error) {
+	if t.backendError != nil {
+		return "", t.backendError
+	}
+	if t.herdr != nil {
+		operation := "unknown"
+		if len(args) > 0 {
+			operation = args[0]
+		}
+		return "", fmt.Errorf("%w: tmux %s while using Herdr", ErrBackendOperation, operation)
+	}
 	// Prepend global flags: -u (UTF-8 mode, PATCH-004) and optionally -L (socket).
 	// The -L flag must come before the subcommand, so it goes in the prefix.
 	allArgs := []string{"-u"}
@@ -928,6 +939,9 @@ func getAllDescendants(pid string) []string {
 // This ensures Claude processes and all their children are properly terminated
 // before respawning the pane.
 func (t *Tmux) KillPaneProcesses(pane string) error {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		return err
+	}
 	// Get the pane PID
 	pid, err := t.GetPanePID(pane)
 	if err != nil {
@@ -990,6 +1004,9 @@ func (t *Tmux) KillPaneProcesses(pane string) error {
 // survive. After this function returns, RespawnPane's -k flag will send SIGHUP to
 // clean up the remaining processes.
 func (t *Tmux) KillPaneProcessesExcluding(pane string, excludePIDs []string) error {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		return err
+	}
 	// Build exclusion set for O(1) lookup
 	exclude := make(map[string]bool)
 	for _, pid := range excludePIDs {
@@ -1346,6 +1363,16 @@ func (t *Tmux) SendKeysRaw(session, keys string) error {
 		if err != nil {
 			return err
 		}
+		encoded := map[string]string{
+			"C-c":    "ctrl+c",
+			"C-u":    "ctrl+u",
+			"Enter":  "enter",
+			"Down":   "down",
+			"Escape": "escape",
+		}
+		if key, ok := encoded[keys]; ok {
+			keys = key
+		}
 		return client.SendKeys(session, keys)
 	}
 	_, err := t.run("send-keys", "-t", session, keys)
@@ -1357,6 +1384,18 @@ func (t *Tmux) SendKeysRaw(session, keys string) error {
 // Uses Ctrl-U to clear the input line before sending the new message.
 // The delay parameter controls how long to wait after clearing before sending (ms).
 func (t *Tmux) SendKeysReplace(session, keys string, clearDelayMs int) error {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		if err := client.SendKeys(session, "ctrl+u"); err != nil {
+			return err
+		}
+		if clearDelayMs > 0 {
+			time.Sleep(time.Duration(clearDelayMs) * time.Millisecond)
+		}
+		return client.Prompt(session, keys)
+	}
 	// Send Ctrl-U to clear any pending input on the line
 	if _, err := t.run("send-keys", "-t", session, "C-u"); err != nil {
 		return err
@@ -1908,6 +1947,17 @@ func (t *Tmux) NudgeSessionWithOpts(session, message string, opts NudgeOpts) err
 // After sending, triggers SIGWINCH to wake Claude in detached sessions.
 // Nudges to the same pane are serialized to prevent interleaving.
 func (t *Tmux) NudgePane(pane, message string) error {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		sessionName, err := client.SessionForPane(pane)
+		if err != nil {
+			return err
+		}
+		return client.Prompt(sessionName, message)
+	}
+
 	// Serialize nudges to this pane to prevent interleaving.
 	// Use a timed lock to avoid permanent blocking if a previous nudge hung.
 	if !acquireNudgeLock(pane, nudgeLockTimeout) {
@@ -2006,7 +2056,7 @@ func (t *Tmux) AcceptWorkspaceTrustDialog(session string) error {
 		// detection alone would exit too early.
 		if containsWorkspaceTrustDialog(content) {
 			// Dialog found — accept it (option 1 is pre-selected, just press Enter)
-			if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
+			if err := t.SendKeysRaw(session, "Enter"); err != nil {
 				return err
 			}
 			// Wait for dialog to dismiss before proceeding
@@ -2079,11 +2129,11 @@ func (t *Tmux) AcceptBypassPermissionsWarning(session string) error {
 		// Look for the characteristic warning text
 		if strings.Contains(content, "Bypass Permissions mode") {
 			// Dialog found — press Down to select "Yes, I accept" then Enter
-			if _, err := t.run("send-keys", "-t", session, "Down"); err != nil {
+			if err := t.SendKeysRaw(session, "Down"); err != nil {
 				return err
 			}
 			time.Sleep(200 * time.Millisecond)
-			if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
+			if err := t.SendKeysRaw(session, "Enter"); err != nil {
 				return err
 			}
 			return nil
@@ -2181,6 +2231,12 @@ func (t *Tmux) GetPaneCommand(session string) (string, error) {
 // Returns ("", nil) if the session has only one pane (no disambiguation needed),
 // or if no agent pane can be identified (caller should fall back to session targeting).
 func (t *Tmux) FindAgentPane(session string) (string, error) {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return "", err
+		}
+		return client.PaneID(session)
+	}
 	// ZFC: read declared pane identity set at session startup (gt-qmsx).
 	// This replaces process-tree inference for sessions that record GT_PANE_ID.
 	if declaredPane, err := t.GetEnvironment(session, "GT_PANE_ID"); err == nil && declaredPane != "" {
@@ -2252,6 +2308,22 @@ func (t *Tmux) GetPaneID(session string) (string, error) {
 		return "", fmt.Errorf("no panes found in session %s", session)
 	}
 	return result, nil
+}
+
+// GetSessionFromPane resolves a backend pane identifier to its stable Gas Town
+// logical session name.
+func (t *Tmux) GetSessionFromPane(pane string) (string, error) {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return "", err
+		}
+		return client.SessionForPane(pane)
+	}
+	out, err := t.run("display-message", "-t", pane, "-p", "#{session_name}")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
 }
 
 // GetPaneWorkDir returns the current working directory of a pane.
@@ -2583,6 +2655,9 @@ func (t *Tmux) AttachSession(session string) error {
 
 // SelectWindow selects a window by index.
 func (t *Tmux) SelectWindow(session string, index int) error {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		return err
+	}
 	_, err := t.run("select-window", "-t", fmt.Sprintf("%s:%d", session, index))
 	return err
 }
@@ -2805,6 +2880,9 @@ type SessionInfo struct {
 // This is non-disruptive - it doesn't interrupt the session's input.
 // Duration is specified in milliseconds.
 func (t *Tmux) DisplayMessage(session, message string, durationMs int) error {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		return err
+	}
 	// Set display time temporarily, show message, then restore
 	// Use -d flag for duration in tmux 2.9+
 	_, err := t.run("display-message", "-t", session, "-d", fmt.Sprintf("%d", durationMs), message)
@@ -3578,6 +3656,16 @@ func IsInsideTmux() bool {
 	return os.Getenv("TMUX") != ""
 }
 
+// IsInsideSession reports whether the current process belongs to the selected
+// Town session backend. GT_SESSION is injected into every native Gas Town
+// agent, so Herdr callers do not need to impersonate tmux with TMUX/TMUX_PANE.
+func IsInsideSession() bool {
+	if herdr.Enabled() {
+		return strings.TrimSpace(os.Getenv("GT_SESSION")) != ""
+	}
+	return IsInsideTmux()
+}
+
 // SetMailClickBinding configures left-click on status-right to show mail preview.
 // This creates a popup showing the first unread message when clicking the mail icon area.
 //
@@ -3607,6 +3695,12 @@ func (t *Tmux) SetMailClickBinding(session string) error {
 // This is used for "hot reload" of agent sessions - instantly restart in place.
 // The pane parameter should be a pane ID (e.g., "%0") or session:window.pane format.
 func (t *Tmux) RespawnPane(pane, command string) error {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return client.RestartPane(pane, "", command)
+	}
 	if runtime.GOOS == "windows" {
 		// psmux: respawn-pane -k kills the process, then send-keys types the command.
 		if _, err := t.run("respawn-pane", "-k", "-t", pane); err != nil {
@@ -3623,6 +3717,12 @@ func (t *Tmux) RespawnPane(pane, command string) error {
 // in the specified working directory. Use this when the pane's current working
 // directory may have been deleted.
 func (t *Tmux) RespawnPaneWithWorkDir(pane, workDir, command string) error {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return client.RestartPane(pane, workDir, command)
+	}
 	if runtime.GOOS == "windows" {
 		if _, err := t.run("respawn-pane", "-k", "-t", pane); err != nil {
 			return err
@@ -3654,6 +3754,9 @@ func psQuoteValue(s string) string {
 // This resets copy-mode display from [0/N] to [0/0].
 // The pane parameter should be a pane ID (e.g., "%0") or session:window.pane format.
 func (t *Tmux) ClearHistory(pane string) error {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		return err
+	}
 	_, err := t.run("clear-history", "-t", pane)
 	return err
 }
@@ -3677,6 +3780,12 @@ func (t *Tmux) SetRemainOnExit(pane string, on bool) error {
 // SwitchClient switches the current tmux client to a different session.
 // Used after remote recycle to move the user's view to the recycled session.
 func (t *Tmux) SwitchClient(targetSession string) error {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return client.Focus(targetSession)
+	}
 	_, err := t.run("switch-client", "-t", targetSession)
 	return err
 }

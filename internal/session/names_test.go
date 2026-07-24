@@ -19,6 +19,12 @@ func TestClerkSessionName(t *testing.T) {
 	}
 }
 
+func TestFeedSessionName(t *testing.T) {
+	if got, want := FeedSessionName(), "hq-feed"; got != want {
+		t.Errorf("FeedSessionName() = %q, want %q", got, want)
+	}
+}
+
 func TestDeaconSessionName(t *testing.T) {
 	// Deacon session name is now fixed (one per machine), uses HQ prefix
 	want := "hq-deacon"

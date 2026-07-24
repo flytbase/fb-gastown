@@ -31,3 +31,19 @@ Record important decisions and status changes; do not depend on chat memory.
 An external task system is a scoped synchronization surface, not the only copy
 of project knowledge. Obey its configured guard and never exceed its configured
 workspace, project, or mutation scope.
+
+## External Herdr workers
+
+Manual workers may live in a different named Herdr session. Access them only
+through the native allow-listed commands:
+
+- `{{ cmd }} clerk sessions list`
+- `{{ cmd }} clerk sessions workspaces <session-or-alias>`
+- `{{ cmd }} clerk sessions panes <session-or-alias> <workspace-id>`
+- `{{ cmd }} clerk sessions read <session-or-alias> <pane-id>`
+- `{{ cmd }} clerk sessions nudge <session-or-alias> <pane-id> "<message>"`
+
+Pane IDs are scoped to their named Herdr session. Always carry both identifiers
+in durable task notes. You may read and nudge allow-listed external panes, but
+you may not stop/delete external sessions or close/delete their workspaces,
+tabs, or panes.

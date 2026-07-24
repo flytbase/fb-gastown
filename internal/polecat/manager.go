@@ -2454,11 +2454,10 @@ func (m *Manager) DetectStalePolecats(threshold int) ([]*StalenessInfo, error) {
 	return results, nil
 }
 
-// checkTmuxSession checks if a tmux session exists.
+// checkTmuxSession checks if a logical agent session exists in the selected backend.
 func checkTmuxSession(sessionName string) bool {
-	// Use has-session command which returns 0 if session exists
-	cmd := tmux.BuildCommand("has-session", "-t", sessionName)
-	return cmd.Run() == nil
+	exists, err := tmux.NewTmux().HasSession(sessionName)
+	return err == nil && exists
 }
 
 // countCommitsBehind counts how many commits a worktree is behind origin/<defaultBranch>.

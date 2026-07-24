@@ -47,6 +47,12 @@ type TownSettings struct {
 	// Supported values are "tmux" (default) and "herdr".
 	SessionBackend string `json:"session_backend,omitempty"`
 
+	// HerdrSession optionally binds this Town to an existing named Herdr
+	// session. Empty means Gas Town owns a deterministic Town-specific session.
+	// Persist the concrete session name here, never the transient "current"
+	// selector, so daemon and shell commands can reconnect outside Herdr.
+	HerdrSession string `json:"herdr_session,omitempty"`
+
 	// CLITheme controls CLI output color scheme.
 	// Values: "dark", "light", "auto" (default).
 	// "auto" lets the terminal emulator's background color guide the choice.

@@ -415,11 +415,11 @@ func setupPrimeSession(ctx RoleContext, roleInfo RoleInfo) error {
 	return nil
 }
 
-// repairSessionEnv checks if the tmux session is missing identity env vars
+// repairSessionEnv checks if the selected backend session is missing identity env vars
 // and re-injects them from the current role context. This self-heals sessions
 // that were created through non-standard paths or older gt versions. GH#3006.
 func repairSessionEnv(ctx RoleContext, roleInfo RoleInfo) {
-	if os.Getenv("TMUX") == "" {
+	if !tmux.IsInsideSession() {
 		return
 	}
 
@@ -1107,7 +1107,10 @@ func acquireIdentityLock(ctx RoleContext) error {
 	l := lock.New(ctx.WorkDir)
 
 	// Determine session ID from environment or context
-	sessionID := os.Getenv("TMUX_PANE")
+	sessionID := os.Getenv("GT_SESSION")
+	if sessionID == "" {
+		sessionID = os.Getenv("TMUX_PANE")
+	}
 	if sessionID == "" {
 		// Fall back to a descriptive identifier
 		sessionID = fmt.Sprintf("%s/%s", ctx.Rig, ctx.Polecat)
@@ -1240,31 +1243,30 @@ func injectWorkContext(ctx RoleContext, hookedBead *beads.Issue) {
 	_ = os.Setenv("GT_WORK_RIG", workRig)
 	_ = os.Setenv("GT_WORK_BEAD", workBead)
 	_ = os.Setenv("GT_WORK_MOL", workMol)
-	setTmuxWorkContext(workRig, workBead, workMol)
+	setSessionWorkContext(workRig, workBead, workMol)
 }
 
-// setTmuxWorkContext writes GT_WORK_RIG, GT_WORK_BEAD, GT_WORK_MOL into the current
-// tmux session environment. Future processes spawned in the session (e.g. a new
+// setSessionWorkContext writes GT_WORK_RIG, GT_WORK_BEAD, GT_WORK_MOL into the
+// selected backend session environment. Future processes spawned in the session (e.g. a new
 // Claude Code instance after handoff/compaction) will inherit these values automatically.
 // Empty values unset the variable in the session env to prevent stale context leaking
-// across prime cycles. No-op when not running inside a tmux session.
-func setTmuxWorkContext(workRig, workBead, workMol string) {
-	if os.Getenv("TMUX") == "" {
+// across prime cycles. No-op when not running inside a managed Town session.
+func setSessionWorkContext(workRig, workBead, workMol string) {
+	if !tmux.IsInsideSession() {
 		return
 	}
-	out, err := exec.Command("tmux", "display-message", "-p", "#{session_name}").Output()
-	if err != nil {
-		return
-	}
-	session := strings.TrimSpace(string(out))
-	if session == "" {
+
+	t := tmux.NewTmux()
+	sessionName, err := t.ResolveCurrentSession()
+	if err != nil || sessionName == "" {
 		return
 	}
 	setOrUnset := func(key, value string) {
 		if value != "" {
-			_ = exec.Command("tmux", "set-environment", "-t", session, key, value).Run()
+			_ = t.SetEnvironment(sessionName, key, value)
 		} else {
-			_ = exec.Command("tmux", "set-environment", "-u", "-t", session, key).Run()
+			// Backends model an unset work-context value as an empty value.
+			_ = t.SetEnvironment(sessionName, key, "")
 		}
 	}
 	setOrUnset("GT_WORK_RIG", workRig)

@@ -22,6 +22,11 @@ func ClerkSessionName() string {
 	return HQPrefix + "clerk"
 }
 
+// FeedSessionName returns the optional Herdr tab used by `gt feed --window`.
+func FeedSessionName() string {
+	return HQPrefix + "feed"
+}
+
 // DeaconSessionName returns the session name for the Deacon agent.
 // One deacon per machine - multi-town requires containers/VMs for isolation.
 func DeaconSessionName() string {
