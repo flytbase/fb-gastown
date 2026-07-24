@@ -1,4 +1,4 @@
-.PHONY: build desktop-build desktop-run install safe-install check-forward-only check-version-tag clean test test-e2e-container check-up-to-date
+.PHONY: build desktop-build desktop-run install install-clerk check-clerk safe-install check-forward-only check-version-tag clean test test-e2e-container check-up-to-date
 
 BINARY := gt
 BINARY_DESKTOP := gt-desktop
@@ -36,6 +36,15 @@ build:
 	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-proxy-server ./cmd/gt-proxy-server
 	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-proxy-client ./cmd/gt-proxy-client
 	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/gt
+
+# Build, validate, and install the native supervised Clerk source variant.
+# Existing Town files and the active gt link are backed up before replacement.
+install-clerk:
+	./scripts/install-native-clerk
+
+# Compile and test the Clerk variant without changing the live Town.
+check-clerk:
+	./scripts/install-native-clerk --check
 
 desktop-build:
 	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_DESKTOP) ./cmd/gt-desktop
