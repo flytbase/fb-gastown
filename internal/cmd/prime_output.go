@@ -12,6 +12,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/checkpoint"
+	"github.com/steveyegge/gastown/internal/clerk"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/deacon"
@@ -93,6 +94,14 @@ func outputPrimeContext(ctx RoleContext) (string, error) {
 	}
 
 	fmt.Print(output)
+	if ctx.Role == RoleClerk && !primeDryRun {
+		snapshot, snapshotErr := clerk.RefreshExternalContext(ctx.TownRoot, 20)
+		if snapshotErr != nil {
+			fmt.Printf("\n## External worker synchronization warning\n\n%v\n", snapshotErr)
+		} else {
+			fmt.Print(clerk.FormatExternalContext(snapshot))
+		}
+	}
 	return output, nil
 }
 

@@ -264,6 +264,13 @@ func DefaultOverrides() map[string]*HooksConfig {
 					}},
 				},
 				{
+					Matcher: "Bash(*herdr*--session*)",
+					Hooks: []Hook{{
+						Type:    "command",
+						Command: "echo 'BLOCKED: Clerk cross-session Herdr access must use the allow-listed gt clerk sessions commands.' >&2; exit 2",
+					}},
+				},
+				{
 					Matcher: "Bash(gt up*)|Bash(gt mayor*)|Bash(gt sling*)|Bash(gt assign*)|Bash(gt mountain*)",
 					Hooks: []Hook{{
 						Type:    "command",
@@ -283,6 +290,24 @@ func DefaultOverrides() map[string]*HooksConfig {
 						Type:    "command",
 						Command: "echo 'BLOCKED: Clerk may observe Herdr but cannot mutate session topology.' >&2; exit 2",
 					}},
+				},
+			},
+			// Replace the base prompt hook with mail plus an automatic live
+			// worker snapshot. Clerk receives this before every human prompt;
+			// the human never has to ask it to discover or refresh workers.
+			UserPromptSubmit: []HookEntry{
+				{
+					Matcher: "",
+					Hooks: []Hook{
+						{
+							Type:    "command",
+							Command: hookChain(pathSetup, "gt mail check --inject"),
+						},
+						{
+							Type:    "command",
+							Command: hookChain(pathSetup, "gt clerk context"),
+						},
+					},
 				},
 			},
 		},

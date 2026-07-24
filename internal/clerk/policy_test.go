@@ -229,6 +229,54 @@ func TestResolveExternalSessionEnforcesCapabilities(t *testing.T) {
 	}
 }
 
+func TestAutoDiscoverPolicyResolvesLocalSessionAndPreservesIntegrations(t *testing.T) {
+	townRoot := t.TempDir()
+	if _, err := Provision(townRoot, false); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(townRoot, "clerk", "clerk.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	raw["clickup"] = map[string]any{"workspace_id": "workspace-1"}
+	if err := os.WriteFile(path, mustJSON(t, raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetAutoDiscoverLocal(townRoot, true); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := LoadPolicy(townRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !policy.Sessions.AutoDiscoverLocal {
+		t.Fatal("auto_discover_local = false, want true")
+	}
+	resolved, err := policy.ResolveExternalSession("manual-workers", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Name != "manual-workers" || !resolved.AllowRead || !resolved.AllowNudge {
+		t.Fatalf("auto-discovered access = %#v", resolved)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var preserved map[string]any
+	if err := json.Unmarshal(after, &preserved); err != nil {
+		t.Fatal(err)
+	}
+	if preserved["clickup"].(map[string]any)["workspace_id"] != "workspace-1" {
+		t.Fatal("SetAutoDiscoverLocal removed unrelated ClickUp configuration")
+	}
+}
+
 func mustJSON(t *testing.T, value any) []byte {
 	t.Helper()
 	data, err := json.MarshalIndent(value, "", "  ")

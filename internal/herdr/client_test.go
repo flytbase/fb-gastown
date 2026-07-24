@@ -217,6 +217,28 @@ func TestTownSessionNameIsStableAndPathScoped(t *testing.T) {
 	}
 }
 
+func TestDecodeNamedSessionsSupportsHerdrResponseShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+	}{
+		{"direct", `[{"name":"workers","running":true}]`},
+		{"top-level", `{"sessions":[{"name":"workers","running":true}]}`},
+		{"result", `{"result":{"sessions":[{"name":"workers","running":true}]}}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			sessions, err := decodeNamedSessions([]byte(test.data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(sessions) != 1 || sessions[0].Name != "workers" || !sessions[0].Running {
+				t.Fatalf("sessions = %#v", sessions)
+			}
+		})
+	}
+}
+
 func TestRestartPaneCreatesReplacementBeforeClosingOldTab(t *testing.T) {
 	runner := &fakeRunner{responses: [][]byte{
 		[]byte(`{"result":{"tab":{"tab_id":"tab-old"},"root_pane":{"pane_id":"pane-old"}}}`),

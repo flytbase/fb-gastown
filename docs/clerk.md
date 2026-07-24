@@ -95,6 +95,15 @@ cd ~/gt
 gt clerk sessions allow current --alias manual
 ```
 
+For a task-head that must automatically know every local Herdr worker without
+per-session registration:
+
+```bash
+gt clerk sessions auto-discover on
+```
+
+The Town's own Herdr session is excluded from this external-worker catalog.
+
 Clerk can then list workspaces and panes, read output, and nudge a pane:
 
 ```bash
@@ -106,3 +115,12 @@ gt clerk sessions nudge manual w1:p7 "Read the task context recorded by Clerk."
 
 External pane IDs are scoped to their named session. The Clerk command surface
 does not expose stop/delete/close operations for external Herdr resources.
+
+The human does not prompt Clerk to run these discovery commands. Native
+SessionStart priming and the Clerk UserPromptSubmit hook automatically refresh
+the catalog, recent recognized-agent output, and status before Clerk receives
+the conversation. The durable snapshot is stored at:
+
+```text
+<town>/clerk/state/external-workers.json
+```

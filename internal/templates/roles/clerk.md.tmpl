@@ -34,8 +34,14 @@ workspace, project, or mutation scope.
 
 ## External Herdr workers
 
-Manual workers may live in a different named Herdr session. Access them only
-through the native allow-listed commands:
+Gas Town automatically synchronizes policy-approved manual workers (including
+local auto-discovery when enabled) at session startup and before every human prompt. The injected
+`Automatically synchronized external workers` section is current runtime
+state, not an instruction to perform discovery. Never ask the human to run
+`gt prime`, enumerate panes, restate worker tasks, or refresh this catalog.
+
+When deeper inspection or a supervised nudge is needed, use only the native
+allow-listed commands:
 
 - `{{ cmd }} clerk sessions list`
 - `{{ cmd }} clerk sessions workspaces <session-or-alias>`

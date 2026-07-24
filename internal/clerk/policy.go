@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/atomicfile"
+	"github.com/steveyegge/gastown/internal/config"
 )
 
 const CurrentPolicyVersion = 2
@@ -16,17 +17,23 @@ const CurrentPolicyVersion = 2
 // defaults and validation live in this package; clerk.json contains only the
 // per-Town choices that may legitimately differ between installations.
 type Policy struct {
-	Version  int      `json:"version"`
-	Identity Identity `json:"identity"`
-	Town     Town     `json:"town"`
-	Sessions struct {
-		External []ExternalSession `json:"external,omitempty"`
-	} `json:"sessions,omitempty"`
-	Routing struct {
+	Version  int           `json:"version"`
+	Identity Identity      `json:"identity"`
+	Town     Town          `json:"town"`
+	Sessions SessionPolicy `json:"sessions,omitempty"`
+	Routing  struct {
 		Mode           string                  `json:"mode"`
 		DefaultProfile string                  `json:"default_profile"`
 		Profiles       map[string]RouteProfile `json:"profiles"`
 	} `json:"routing"`
+}
+
+type SessionPolicy struct {
+	// AutoDiscoverLocal gives Clerk read/nudge access to all local named Herdr
+	// sessions except its own Town session. The native command surface and
+	// role hooks still block destructive topology operations.
+	AutoDiscoverLocal bool              `json:"auto_discover_local,omitempty"`
+	External          []ExternalSession `json:"external,omitempty"`
 }
 
 // ExternalSession is a manually managed Herdr session the Clerk may observe
@@ -187,6 +194,13 @@ func (p *Policy) ResolveExternalSession(ref string, nudge bool) (ExternalSession
 		}
 		return external, nil
 	}
+	if p.Sessions.AutoDiscoverLocal {
+		name, err := config.ParseHerdrSession(ref)
+		if err != nil || name == "" {
+			return ExternalSession{}, fmt.Errorf("invalid auto-discovered Herdr session %q", ref)
+		}
+		return ExternalSession{Name: name, AllowRead: true, AllowNudge: true}, nil
+	}
 	return ExternalSession{}, fmt.Errorf("external Herdr session %q is not allow-listed in clerk.json", ref)
 }
 
@@ -229,6 +243,30 @@ func AllowExternalSession(townRoot string, external ExternalSession) error {
 	raw["sessions"] = sessions
 	if err := atomicfile.WriteJSONWithPerm(path, raw, 0600); err != nil {
 		return fmt.Errorf("writing Clerk external session access: %w", err)
+	}
+	return nil
+}
+
+// SetAutoDiscoverLocal updates only Clerk's local Herdr discovery policy while
+// preserving unrelated integrations and policy fields.
+func SetAutoDiscoverLocal(townRoot string, enabled bool) error {
+	path := filepath.Join(townRoot, "clerk", "clerk.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading Clerk policy %s: %w", path, err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("decoding Clerk policy for update: %w", err)
+	}
+	sessions, _ := raw["sessions"].(map[string]any)
+	if sessions == nil {
+		sessions = make(map[string]any)
+	}
+	sessions["auto_discover_local"] = enabled
+	raw["sessions"] = sessions
+	if err := atomicfile.WriteJSONWithPerm(path, raw, 0600); err != nil {
+		return fmt.Errorf("writing Clerk local session discovery policy: %w", err)
 	}
 	return nil
 }

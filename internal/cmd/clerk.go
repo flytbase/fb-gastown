@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/clerk"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/herdr"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -35,6 +37,8 @@ var (
 	clerkSlingProfile    string
 	clerkSessionAlias    string
 	clerkSessionLines    int
+	clerkContextLines    int
+	clerkContextJSON     bool
 )
 
 var clerkCmd = &cobra.Command{
@@ -229,9 +233,9 @@ var clerkSessionsListCmd = &cobra.Command{
 			return err
 		}
 		if len(policy.Sessions.External) == 0 {
-			fmt.Println("No external Herdr sessions are allow-listed.")
-			return nil
+			fmt.Println("No explicit external Herdr sessions are allow-listed.")
 		}
+		fmt.Printf("Automatic local discovery: %t\n", policy.Sessions.AutoDiscoverLocal)
 		for _, external := range policy.Sessions.External {
 			ref := external.Name
 			if external.Alias != "" {
@@ -239,6 +243,35 @@ var clerkSessionsListCmd = &cobra.Command{
 			}
 			fmt.Printf("%s  read=%t nudge=%t\n", ref, external.AllowRead, external.AllowNudge)
 		}
+		return nil
+	},
+}
+
+var clerkSessionsAutoDiscoverCmd = &cobra.Command{
+	Use:   "auto-discover <on|off>",
+	Short: "Automatically synchronize workers from all local named Herdr sessions",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		if role := strings.TrimSpace(os.Getenv("GT_ROLE")); role != "" {
+			return fmt.Errorf("session discovery policy must be configured from a neutral human shell (GT_ROLE=%s)", role)
+		}
+		var enabled bool
+		switch strings.ToLower(strings.TrimSpace(args[0])) {
+		case "on", "true", "enabled":
+			enabled = true
+		case "off", "false", "disabled":
+			enabled = false
+		default:
+			return fmt.Errorf("expected on or off")
+		}
+		townRoot, err := workspace.FindFromCwdOrError()
+		if err != nil {
+			return err
+		}
+		if err := clerk.SetAutoDiscoverLocal(townRoot, enabled); err != nil {
+			return err
+		}
+		fmt.Printf("%s Clerk automatic local Herdr discovery: %t\n", style.Bold.Render("✓"), enabled)
 		return nil
 	},
 }
@@ -314,6 +347,34 @@ var clerkSessionsNudgeCmd = &cobra.Command{
 	},
 }
 
+var clerkContextCmd = &cobra.Command{
+	Use:   "context",
+	Short: "Refresh and print Clerk's automatically injected worker context",
+	RunE: func(_ *cobra.Command, _ []string) error {
+		townRoot, err := workspace.FindFromCwdOrError()
+		if err != nil {
+			return err
+		}
+		snapshot, err := clerk.RefreshExternalContext(townRoot, clerkContextLines)
+		if err != nil {
+			// Prompt injection must fail open when an external session is
+			// temporarily unavailable; the snapshot records per-session errors.
+			if strings.TrimSpace(os.Getenv("GT_ROLE")) == string(constants.RoleClerk) {
+				fmt.Printf("\n## External worker synchronization warning\n\n%s\n", err)
+				return nil
+			}
+			return err
+		}
+		if clerkContextJSON {
+			encoder := json.NewEncoder(os.Stdout)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(snapshot)
+		}
+		fmt.Print(clerk.FormatExternalContext(snapshot))
+		return nil
+	},
+}
+
 func resolveClerkExternalSession(ref string, nudge bool) (clerk.ExternalSession, error) {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
@@ -344,12 +405,15 @@ func init() {
 	clerkSlingCmd.Flags().StringVar(&clerkSlingProfile, "profile", "", "Clerk routing profile from clerk.json")
 	clerkSessionsAllowCmd.Flags().StringVar(&clerkSessionAlias, "alias", "", "Short stable name for the external session")
 	clerkSessionsReadCmd.Flags().IntVar(&clerkSessionLines, "lines", 120, "Recent unwrapped lines to read")
+	clerkContextCmd.Flags().IntVar(&clerkContextLines, "lines", 20, "Recent lines captured per recognized external agent")
+	clerkContextCmd.Flags().BoolVar(&clerkContextJSON, "json", false, "Print the persisted snapshot as JSON")
 
 	clerkCmd.AddCommand(clerkStartCmd, clerkStopCmd, clerkStatusCmd, clerkAttachCmd)
 	clerkCmd.AddCommand(clerkRequestCmd, clerkAuthorizeCmd, clerkSlingCmd)
-	clerkSessionsCmd.AddCommand(clerkSessionsAllowCmd, clerkSessionsListCmd)
+	clerkSessionsCmd.AddCommand(clerkSessionsAllowCmd, clerkSessionsListCmd, clerkSessionsAutoDiscoverCmd)
 	clerkSessionsCmd.AddCommand(clerkSessionsWorkspacesCmd, clerkSessionsPanesCmd, clerkSessionsReadCmd, clerkSessionsNudgeCmd)
 	clerkCmd.AddCommand(clerkSessionsCmd)
+	clerkCmd.AddCommand(clerkContextCmd)
 	rootCmd.AddCommand(clerkCmd)
 }
 

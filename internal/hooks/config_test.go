@@ -584,8 +584,9 @@ func TestComputeExpectedNoBase(t *testing.T) {
 		t.Fatalf("ComputeExpected(clerk) failed: %v", err)
 	}
 	clerkMatchers := map[string]bool{
-		"mcp__clickup__.*": false,
-		"Bash(tmux*)":      false,
+		"mcp__clickup__.*":        false,
+		"Bash(tmux*)":             false,
+		"Bash(*herdr*--session*)": false,
 	}
 	for _, entry := range clerk.PreToolUse {
 		if _, ok := clerkMatchers[entry.Matcher]; ok {
@@ -596,6 +597,12 @@ func TestComputeExpectedNoBase(t *testing.T) {
 		if !found {
 			t.Errorf("clerk missing native guard matcher: %s", matcher)
 		}
+	}
+	if len(clerk.UserPromptSubmit) != 1 || len(clerk.UserPromptSubmit[0].Hooks) != 2 {
+		t.Fatalf("clerk prompt injection hooks = %#v, want mail plus automatic worker context", clerk.UserPromptSubmit)
+	}
+	if got := clerk.UserPromptSubmit[0].Hooks[1].Command; !strings.Contains(got, "gt clerk context") {
+		t.Fatalf("clerk worker context hook = %q, want gt clerk context", got)
 	}
 	if len(clerk.SessionStart) != len(defaultBase.SessionStart) {
 		t.Error("expected clerk to inherit SessionStart from DefaultBase")
