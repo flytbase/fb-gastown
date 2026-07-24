@@ -88,6 +88,11 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 		env["BD_ACTOR"] = constants.RoleMayor
 		env["GIT_AUTHOR_NAME"] = constants.RoleMayor
 
+	case constants.RoleClerk:
+		env["GT_ROLE"] = constants.RoleClerk
+		env["BD_ACTOR"] = constants.RoleClerk
+		env["GIT_AUTHOR_NAME"] = constants.RoleClerk
+
 	case constants.RoleDeacon:
 		env["GT_ROLE"] = constants.RoleDeacon
 		env["BD_ACTOR"] = constants.RoleDeacon
@@ -141,6 +146,12 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 			env["BD_ACTOR"] = "dog"
 			env["GIT_AUTHOR_NAME"] = "dog"
 		}
+	}
+
+	// The selected terminal transport must propagate to every native service
+	// and Polecat started by this agent.
+	if backend := strings.TrimSpace(os.Getenv("GT_SESSION_BACKEND")); backend != "" {
+		env["GT_SESSION_BACKEND"] = backend
 	}
 
 	// Only set GT_ROOT if provided
@@ -548,7 +559,7 @@ func ShellQuote(s string) string {
 }
 
 // psQuote quotes a value for use in PowerShell $env: assignments.
-// Uses single quotes with embedded single quotes doubled ('').
+// Uses single quotes with embedded single quotes doubled (”).
 func psQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }

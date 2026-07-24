@@ -1,9 +1,9 @@
 package cmd
 
 import (
-	"github.com/steveyegge/gastown/internal/cli"
 	"encoding/json"
 	"fmt"
+	"github.com/steveyegge/gastown/internal/cli"
 	"io"
 	"os"
 	"path/filepath"
@@ -38,6 +38,8 @@ func outputPrimeContext(ctx RoleContext) (string, error) {
 	switch ctx.Role {
 	case RoleMayor:
 		roleName = constants.RoleMayor
+	case RoleClerk:
+		roleName = constants.RoleClerk
 	case RoleDeacon:
 		roleName = constants.RoleDeacon
 	case RoleWitness:
@@ -161,6 +163,10 @@ func outputPrimeContextFallback(ctx RoleContext) {
 	switch ctx.Role {
 	case RoleMayor:
 		outputMayorContext(ctx)
+	case RoleClerk:
+		fmt.Println("# Clerk Context")
+		fmt.Println()
+		fmt.Println("You are the human-supervised Clerk. Use `gt clerk request`, wait for human authorization, then use `gt clerk sling`.")
 	case RoleWitness:
 		outputWitnessContext(ctx)
 	case RoleRefinery:
@@ -361,6 +367,14 @@ func outputCommandQuickReference(ctx RoleContext) {
 		fmt.Printf("| Permanently disable rig | `%s rig dock <rig>` | ~~gt rig park~~ (temporary only) |\n", c)
 		fmt.Println("| Create issues | `bd create \"title\"` | ~~gt issue create~~ (not a command) |")
 
+	case RoleClerk:
+		fmt.Println("| Want to... | Correct command | Boundary |")
+		fmt.Println("|------------|----------------|----------|")
+		fmt.Printf("| Prepare dispatch | `%s clerk request <bead> <rig>` | Does not start work |\n", c)
+		fmt.Printf("| Dispatch authorized work | `%s clerk sling <request> --token <capability>` | Token must come from human |\n", c)
+		fmt.Printf("| Create human capability | Human runs `%s clerk authorize <request>` | Clerk must never run it |\n", c)
+		fmt.Printf("| Bypass supervision | Never use raw `%s sling` | Hard authorization boundary |\n", c)
+
 	case RoleCrew:
 		fmt.Println("| Want to... | Correct command | Common mistake |")
 		fmt.Println("|------------|----------------|----------------|")
@@ -480,6 +494,14 @@ func outputStartupDirective(ctx RoleContext) {
 		fmt.Println("4. Check for attached work: `" + cli.Name() + " hook`")
 		fmt.Println("   - If mol attached → **RUN IT** (no human input needed)")
 		fmt.Println("   - If no mol → await user instruction")
+	case RoleClerk:
+		fmt.Println()
+		fmt.Println("---")
+		fmt.Println()
+		fmt.Println("**STARTUP PROTOCOL**: You are the supervised Clerk.")
+		fmt.Println("1. Load durable task state and local project documentation.")
+		fmt.Println("2. Check pending Clerk dispatch requests.")
+		fmt.Println("3. Never dispatch or authorize autonomously; await the human.")
 	case RoleWitness:
 		if stopped, reason := IsRigParkedOrDocked(ctx.TownRoot, ctx.Rig); stopped {
 			fmt.Println()

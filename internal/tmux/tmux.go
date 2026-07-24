@@ -19,6 +19,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/herdr"
 	"github.com/steveyegge/gastown/internal/telemetry"
 )
 
@@ -179,9 +180,14 @@ func BuildCommandContext(ctx context.Context, args ...string) *exec.Cmd {
 	return cmd
 }
 
-// Tmux wraps tmux operations.
+// Tmux is Gas Town's compatibility facade for terminal-backed sessions.
+// It uses tmux by default and delegates lifecycle operations to Herdr when
+// GT_SESSION_BACKEND=herdr. Keeping the facade preserves the existing native
+// Polecat, Witness, and Refinery lifecycle without scattering backend checks.
 type Tmux struct {
-	socketName string // tmux socket name (-L flag), empty = default socket
+	socketName   string // tmux socket name (-L flag), empty = default socket
+	herdr        *herdr.Client
+	backendError error
 }
 
 // noTownSocket is a sentinel socket name used when no town socket is configured.
@@ -199,6 +205,10 @@ const EnvAgentReady = "GT_AGENT_READY"
 // Falls back to GT_TOWN_SOCKET env var (set by cross-socket tmux bindings).
 // Empty socket means use the default tmux server.
 func NewTmux() *Tmux {
+	if herdr.Enabled() {
+		client, err := herdr.NewFromEnvironment()
+		return &Tmux{herdr: client, backendError: err}
+	}
 	sock := GetDefaultSocket()
 	if sock == "" {
 		// GT_TOWN_SOCKET is embedded in tmux bindings created by EnsureBindingsOnSocket
@@ -215,6 +225,23 @@ func NewTmux() *Tmux {
 // and keystroke leaks (e.g. Escape from NudgeSession hitting the user's prefix table).
 func NewTmuxWithSocket(socket string) *Tmux {
 	return &Tmux{socketName: socket}
+}
+
+// NewHerdr creates a session facade explicitly bound to a resolved Town.
+// Management commands use this before a child agent has inherited GT_ROOT.
+func NewHerdr(townRoot string) *Tmux {
+	client, err := herdr.NewFromEnvironmentWithTownRoot(townRoot)
+	return &Tmux{herdr: client, backendError: err}
+}
+
+func (t *Tmux) herdrBackend() (*herdr.Client, bool, error) {
+	if t.herdr != nil {
+		return t.herdr, true, nil
+	}
+	if t.backendError != nil {
+		return nil, true, t.backendError
+	}
+	return nil, false, nil
 }
 
 // run executes a tmux command and returns stdout.
@@ -373,6 +400,12 @@ func (t *Tmux) NewSessionWithCommand(name, workDir, command string) error {
 func (t *Tmux) NewSessionWithCommandAndEnv(name, workDir, command string, env map[string]string) error {
 	if err := validateSessionName(name); err != nil {
 		return err
+	}
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return client.Create(name, workDir, command, env)
 	}
 
 	// Kill stale same-named sessions on other sockets to prevent split-brain.
@@ -594,6 +627,12 @@ func (t *Tmux) EnsureSessionFreshWithCommandAndEnv(name, workDir, command string
 // session is already gone or there is no tmux server.
 func (t *Tmux) KillSession(name string) (retErr error) {
 	defer func() { telemetry.RecordSessionStop(context.Background(), name, retErr) }()
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return client.Close(name)
+	}
 	_, retErr = t.run("kill-session", "-t", name)
 	if retErr == ErrSessionNotFound || retErr == ErrNoServer {
 		retErr = nil
@@ -624,6 +663,12 @@ const processKillGracePeriod = 2 * time.Second
 //
 // This ensures Claude processes and all their children are properly terminated.
 func (t *Tmux) KillSessionWithProcesses(name string) error {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return client.Close(name)
+	}
 	// Disarm auto-respawn BEFORE killing anything. The pane-died hook would
 	// otherwise respawn the process 3 seconds after we kill it, creating a
 	// zombie that fights every kill attempt.
@@ -698,6 +743,12 @@ func (t *Tmux) KillSessionWithProcesses(name string) error {
 // the calling process (e.g., gt done) is running inside the session it's terminating.
 // Without exclusion, the caller would be killed before completing the cleanup.
 func (t *Tmux) KillSessionWithProcessesExcluding(name string, excludePIDs []string) error {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return client.Close(name)
+	}
 	// Disarm auto-respawn BEFORE killing anything (same as KillSessionWithProcesses).
 	_ = t.SetRemainOnExit(name, false)
 	_, _ = t.run("set-hook", "-t", name, "-u", "pane-died")
@@ -1019,6 +1070,9 @@ func (t *Tmux) SetExitEmpty(on bool) error {
 
 // IsAvailable checks if tmux is installed and can be invoked.
 func (t *Tmux) IsAvailable() bool {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		return err == nil
+	}
 	cmd := exec.Command("tmux", "-V")
 	hideConsoleWindow(cmd)
 	return cmd.Run() == nil
@@ -1028,6 +1082,12 @@ func (t *Tmux) IsAvailable() bool {
 // Uses "=" prefix for exact matching, preventing prefix matches
 // (e.g., "gt-deacon-boot" won't match when checking for "gt-deacon").
 func (t *Tmux) HasSession(name string) (bool, error) {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return false, err
+		}
+		return client.Has(name)
+	}
 	// psmux (Windows tmux alternative) doesn't support the "=" exact-match
 	// prefix for session targets. Use the bare name on Windows.
 	target := "=" + name
@@ -1052,6 +1112,12 @@ func (t *Tmux) HasSession(name string) (bool, error) {
 
 // ListSessions returns all session names.
 func (t *Tmux) ListSessions() ([]string, error) {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return nil, err
+		}
+		return client.List()
+	}
 	out, err := t.run("list-sessions", "-F", "#{session_name}")
 	if err != nil {
 		if errors.Is(err, ErrNoServer) {
@@ -1206,6 +1272,12 @@ func (t *Tmux) SendKeys(session, keys string) error {
 // This prevents race conditions where Enter arrives before paste is processed.
 func (t *Tmux) SendKeysDebounced(session, keys string, debounceMs int) (retErr error) {
 	defer func() { telemetry.RecordPromptSend(context.Background(), session, keys, debounceMs, retErr) }()
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return client.Prompt(session, keys)
+	}
 	// Send text using literal mode (-l) to handle special chars
 	if _, err := t.run("send-keys", "-t", session, "-l", keys); err != nil {
 		return err
@@ -1221,6 +1293,12 @@ func (t *Tmux) SendKeysDebounced(session, keys string, debounceMs int) (retErr e
 
 // SendKeysRaw sends keystrokes without adding Enter.
 func (t *Tmux) SendKeysRaw(session, keys string) error {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return client.SendKeys(session, keys)
+	}
 	_, err := t.run("send-keys", "-t", session, keys)
 	return err
 }
@@ -1669,6 +1747,12 @@ func (t *Tmux) canonicalPaneTarget(session, pane string) string {
 // NudgeSessionWithOpts is like NudgeSession but accepts delivery options.
 // See NudgeOpts for available options.
 func (t *Tmux) NudgeSessionWithOpts(session, message string, opts NudgeOpts) error {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return client.Prompt(session, message)
+	}
 	// Cross-process lock: serialize nudges across OS processes via flock(2).
 	// Each `gt nudge` CLI invocation is a separate process, so the in-process
 	// channel semaphore below provides no cross-process protection. Without
@@ -1839,6 +1923,9 @@ func (t *Tmux) NudgePane(pane, message string) error {
 // Call this after starting the agent and waiting for it to initialize (WaitForCommand),
 // but before sending any prompts. Idempotent: safe to call on sessions without dialogs.
 func (t *Tmux) AcceptStartupDialogs(session string) error {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		return err
+	}
 	if err := t.AcceptWorkspaceTrustDialog(session); err != nil {
 		return fmt.Errorf("workspace trust dialog: %w", err)
 	}
@@ -1981,6 +2068,9 @@ func (t *Tmux) AcceptBypassPermissionsWarning(session string) error {
 // signals (session age + activity). For startup-time dialog handling where
 // precision matters, use AcceptStartupDialogs instead.
 func (t *Tmux) DismissStartupDialogsBlind(session string) error {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		return err
+	}
 	// Step 1: Send Enter to dismiss trust dialog (if present)
 	if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
 		return fmt.Errorf("sending Enter for trust dialog: %w", err)
@@ -2085,6 +2175,12 @@ func (t *Tmux) findAgentPaneByScan(session string) (string, error) {
 // Targets pane 0 explicitly to be consistent with GetPaneCommand,
 // GetPanePID, and GetPaneWorkDir.
 func (t *Tmux) GetPaneID(session string) (string, error) {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return "", err
+		}
+		return client.PaneID(session)
+	}
 	out, err := t.run("display-message", "-t", session+":0.0", "-p", "#{pane_id}")
 	if err != nil {
 		return "", err
@@ -2100,6 +2196,16 @@ func (t *Tmux) GetPaneID(session string) (string, error) {
 // Targets pane 0 explicitly to avoid returning the active pane's
 // working directory in multi-pane sessions.
 func (t *Tmux) GetPaneWorkDir(session string) (string, error) {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return "", err
+		}
+		pane, err := client.Get(session)
+		if err != nil {
+			return "", err
+		}
+		return pane.Cwd, nil
+	}
 	out, err := t.run("display-message", "-t", session+":0.0", "-p", "#{pane_current_path}")
 	if err != nil {
 		return "", err
@@ -2116,6 +2222,12 @@ func (t *Tmux) GetPaneWorkDir(session string) (string, error) {
 // returning the active pane's PID when a non-agent window is focused. When target is
 // a pane ID (e.g., "%5"), uses it directly.
 func (t *Tmux) GetPanePID(target string) (string, error) {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return "", err
+		}
+		return "", nil
+	}
 	tmuxTarget := target
 	if !strings.HasPrefix(target, "%") {
 		tmuxTarget = target + ":^"
@@ -2134,6 +2246,15 @@ func (t *Tmux) GetPanePID(target string) (string, error) {
 // GetSessionActivity returns the last activity time for a session.
 // This is updated whenever there's any activity in the session (input/output).
 func (t *Tmux) GetSessionActivity(session string) (time.Time, error) {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return time.Time{}, err
+		}
+		if _, err := client.Get(session); err != nil {
+			return time.Time{}, err
+		}
+		return time.Now(), nil
+	}
 	out, err := t.run("display-message", "-t", session, "-p", "#{session_activity}")
 	if err != nil {
 		return time.Time{}, err
@@ -2195,6 +2316,19 @@ func (z ZombieStatus) IsZombie() bool {
 //
 // This is the preferred unified method for zombie detection across all agent types.
 func (t *Tmux) CheckSessionHealth(session string, maxInactivity time.Duration) ZombieStatus {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return SessionDead
+		}
+		exists, err := client.Has(session)
+		if err != nil || !exists {
+			return SessionDead
+		}
+		if !client.IsAlive(session) {
+			return AgentDead
+		}
+		return SessionHealthy
+	}
 	// Level 1: Does the tmux session exist?
 	alive, err := t.HasSession(session)
 	if err != nil || !alive {
@@ -2340,6 +2474,12 @@ func (t *Tmux) FindSessionByWorkDir(targetDir string, processNames []string) ([]
 
 // CapturePane captures the visible content of a pane.
 func (t *Tmux) CapturePane(session string, lines int) (string, error) {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return "", err
+		}
+		return client.Read(session, lines)
+	}
 	return t.run("capture-pane", "-p", "-t", session, "-S", fmt.Sprintf("-%d", lines))
 }
 
@@ -2363,6 +2503,12 @@ func (t *Tmux) CapturePaneLines(session string, lines int) ([]string, error) {
 // AttachSession attaches to an existing session.
 // Note: This replaces the current process with tmux attach.
 func (t *Tmux) AttachSession(session string) error {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return client.Focus(session)
+	}
 	_, err := t.run("attach-session", "-t", session)
 	return err
 }
@@ -2425,12 +2571,32 @@ func parentPID(pid int) (int, error) {
 
 // SetEnvironment sets an environment variable in the session.
 func (t *Tmux) SetEnvironment(session, key, value string) error {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return client.SetEnvironment(session, key, value)
+	}
 	_, err := t.run("set-environment", "-t", session, key, value)
 	return err
 }
 
 // GetEnvironment gets an environment variable from the session.
 func (t *Tmux) GetEnvironment(session, key string) (string, error) {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return "", err
+		}
+		env, err := client.Environment(session)
+		if err != nil {
+			return "", err
+		}
+		value, ok := env[key]
+		if !ok {
+			return "", fmt.Errorf("environment variable %s is not set", key)
+		}
+		return value, nil
+	}
 	out, err := t.run("show-environment", "-t", session, key)
 	if err != nil {
 		return "", err
@@ -2733,6 +2899,9 @@ func (t *Tmux) matchesPaneRuntime(session, cmd, pid string, processNames []strin
 // falling back to GT_AGENT-based lookup for legacy sessions.
 // This is the preferred method for zombie detection across all agent types.
 func (t *Tmux) IsAgentAlive(session string) bool {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		return err == nil && client.IsAlive(session)
+	}
 	return t.IsRuntimeRunning(session, t.resolveSessionProcessNames(session))
 }
 
@@ -2759,6 +2928,12 @@ func (t *Tmux) resolveSessionProcessNames(session string) []string {
 // claude-original) where exec env does not replace the shell as the pane
 // foreground process. Replaces process-tree probing (IsAgentAlive) per gt-sk5u.
 func (t *Tmux) WaitForCommand(session string, excludeCommands []string, timeout time.Duration) error {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return client.WaitReady(session, timeout)
+	}
 	// ZFC: Clear agent-ready sentinel to prevent stale values from previous
 	// agent runs. The agent's SessionStart hook (gt prime --hook) sets this
 	// to "1" once the agent is running. Unsetting here ensures we only detect
@@ -2875,6 +3050,12 @@ func readyPromptPrefixForSession(t *Tmux, session string) string {
 }
 
 func (t *Tmux) WaitForRuntimeReady(session string, rc *config.RuntimeConfig, timeout time.Duration) error {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return err
+		}
+		return client.WaitReady(session, timeout)
+	}
 	if rc == nil || rc.Tmux == nil {
 		return nil
 	}
@@ -3023,6 +3204,9 @@ func (t *Tmux) IsAtPrompt(session string, rc *config.RuntimeConfig) bool {
 // pane starting with ⏵⏵). When the agent is actively working, the status
 // bar contains "esc to interrupt". When idle, it does not.
 func (t *Tmux) IsIdle(session string) bool {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		return err == nil && client.IsIdle(session)
+	}
 	lines, err := t.CapturePaneLines(session, 5)
 	if err != nil {
 		return false
@@ -3052,6 +3236,16 @@ func (t *Tmux) IsIdle(session string) bool {
 
 // GetSessionInfo returns detailed information about a session.
 func (t *Tmux) GetSessionInfo(name string) (*SessionInfo, error) {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return nil, err
+		}
+		pane, err := client.Get(name)
+		if err != nil {
+			return nil, err
+		}
+		return &SessionInfo{Name: name, Windows: 1, Attached: pane.AgentStatus != ""}, nil
+	}
 	format := "#{session_name}|#{session_windows}|#{session_created}|#{session_attached}|#{session_activity}|#{session_last_attached}"
 	out, err := t.run("list-sessions", "-F", format, "-f", fmt.Sprintf("#{==:#{session_name},%s}", name))
 	if err != nil {
@@ -3200,6 +3394,9 @@ func (t *Tmux) SetDynamicStatus(session string) error {
 //   - non-nil: apply Window's colors as the window background
 //   - nil: reset window background to terminal defaults (disabled)
 func (t *Tmux) ConfigureGasTownSession(session string, theme *Theme, rig, worker, role string) error {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		return err
+	}
 	if theme != nil {
 		if err := t.ApplyTheme(session, *theme); err != nil {
 			return fmt.Errorf("applying theme: %w", err)
@@ -3353,6 +3550,9 @@ func (t *Tmux) ClearHistory(pane string) error {
 // When off (default), the pane is destroyed when its process exits.
 // This is essential for handoff: set on before killing processes, so respawn-pane works.
 func (t *Tmux) SetRemainOnExit(pane string, on bool) error {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		return err
+	}
 	value := "on"
 	if !on {
 		value = "off"
@@ -3763,6 +3963,16 @@ func EnsureBindingsOnSocket(socket, townSocket string) error {
 // GetSessionCreatedUnix returns the Unix timestamp when a session was created.
 // Returns 0 if the session doesn't exist or can't be queried.
 func (t *Tmux) GetSessionCreatedUnix(session string) (int64, error) {
+	if client, enabled, err := t.herdrBackend(); enabled {
+		if err != nil {
+			return 0, err
+		}
+		createdAt, err := client.CreatedAt(session)
+		if err != nil {
+			return 0, err
+		}
+		return createdAt.Unix(), nil
+	}
 	out, err := t.run("display-message", "-t", session, "-p", "#{session_created}")
 	if err != nil {
 		return 0, err
@@ -3847,6 +4057,9 @@ func (t *Tmux) CleanupOrphanedSessions(isGTSession func(string) bool) (cleaned i
 // When the pane exits, tmux runs the hook command with exit status info.
 // The agentID is used to identify the agent in crash logs (e.g., "gastown/Toast").
 func (t *Tmux) SetPaneDiedHook(session, agentID string) error {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		return err
+	}
 	if err := validateSessionName(session); err != nil {
 		return err
 	}
@@ -3880,6 +4093,9 @@ func (t *Tmux) SetPaneDiedHook(session, agentID string) error {
 //
 // Requires remain-on-exit to be set first (called automatically by this function).
 func (t *Tmux) SetAutoRespawnHook(session string) error {
+	if _, enabled, err := t.herdrBackend(); enabled {
+		return err
+	}
 	if err := validateSessionName(session); err != nil {
 		return err
 	}

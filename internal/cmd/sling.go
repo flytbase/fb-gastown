@@ -194,6 +194,9 @@ func runSlingRespawnReset(_ *cobra.Command, args []string) error {
 }
 
 func runSling(cmd *cobra.Command, args []string) (retErr error) {
+	if os.Getenv("GT_ROLE") == "clerk" || os.Getenv("BD_ACTOR") == "clerk" {
+		return fmt.Errorf("Clerk cannot use raw gt sling; use gt clerk request, human authorization, then gt clerk sling")
+	}
 	ctx := context.Background()
 	if cmd != nil {
 		ctx = cmd.Context()

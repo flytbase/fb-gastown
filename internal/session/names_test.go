@@ -13,6 +13,12 @@ func TestMayorSessionName(t *testing.T) {
 	}
 }
 
+func TestClerkSessionName(t *testing.T) {
+	if got, want := ClerkSessionName(), "hq-clerk"; got != want {
+		t.Errorf("ClerkSessionName() = %q, want %q", got, want)
+	}
+}
+
 func TestDeaconSessionName(t *testing.T) {
 	// Deacon session name is now fixed (one per machine), uses HQ prefix
 	want := "hq-deacon"

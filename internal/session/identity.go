@@ -11,6 +11,7 @@ type Role string
 
 const (
 	RoleMayor    Role = "mayor"
+	RoleClerk    Role = "clerk"
 	RoleDeacon   Role = "deacon"
 	RoleOverseer Role = "overseer"
 	RoleWitness  Role = "witness"
@@ -37,6 +38,9 @@ func ParseAddress(address string) (*AgentIdentity, error) {
 
 	if address == string(RoleMayor) || address == string(RoleMayor)+"/" {
 		return &AgentIdentity{Role: RoleMayor}, nil
+	}
+	if address == string(RoleClerk) || address == string(RoleClerk)+"/" {
+		return &AgentIdentity{Role: RoleClerk}, nil
 	}
 	if address == string(RoleDeacon) || address == string(RoleDeacon)+"/" {
 		return &AgentIdentity{Role: RoleDeacon}, nil
@@ -118,6 +122,8 @@ func ParseSessionNameWithRegistry(session string, registry *PrefixRegistry) (*Ag
 		switch suffix {
 		case string(RoleMayor):
 			return &AgentIdentity{Role: RoleMayor}, nil
+		case string(RoleClerk):
+			return &AgentIdentity{Role: RoleClerk}, nil
 		case string(RoleDeacon):
 			return &AgentIdentity{Role: RoleDeacon}, nil
 		case "boot":
@@ -178,6 +184,8 @@ func (a *AgentIdentity) SessionName() string {
 	switch a.Role {
 	case RoleMayor:
 		return MayorSessionName()
+	case RoleClerk:
+		return ClerkSessionName()
 	case RoleDeacon:
 		if a.Name == "boot" {
 			return BootSessionName()
@@ -224,6 +232,8 @@ func (a *AgentIdentity) BeaconAddress() string {
 	switch a.Role {
 	case RoleMayor:
 		return "mayor"
+	case RoleClerk:
+		return "clerk"
 	case RoleDeacon:
 		return "deacon"
 	case RoleOverseer:
@@ -255,6 +265,8 @@ func (a *AgentIdentity) Address() string {
 	switch a.Role {
 	case RoleMayor:
 		return "mayor"
+	case RoleClerk:
+		return "clerk"
 	case RoleDeacon:
 		return "deacon"
 	case RoleOverseer:

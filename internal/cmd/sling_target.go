@@ -62,7 +62,7 @@ func sessionToAgentID(sessionName string) string {
 func canonicalAssigneeAddress(identity *session.AgentIdentity) string {
 	addr := identity.Address()
 	switch identity.Role {
-	case session.RoleMayor, session.RoleDeacon:
+	case session.RoleMayor, session.RoleClerk, session.RoleDeacon:
 		if !strings.HasSuffix(addr, "/") {
 			return addr + "/"
 		}

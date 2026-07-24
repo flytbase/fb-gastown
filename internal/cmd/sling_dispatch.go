@@ -3,10 +3,13 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/clerk"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/style"
@@ -18,25 +21,25 @@ import (
 // reconstructed into a SlingParams and passed to executeSling().
 type SlingParams struct {
 	// What to sling
-	BeadID      string   // Base bead
-	FormulaName string   // Formula to apply ("mol-polecat-work", user formula, or "")
-	RigName     string   // Target rig (always a rig for queue)
+	BeadID      string // Base bead
+	FormulaName string // Formula to apply ("mol-polecat-work", user formula, or "")
+	RigName     string // Target rig (always a rig for queue)
 
 	// CLI flag passthrough
-	Args       string   // --args
-	Vars       []string // --var (key=value pairs)
-	Merge      string   // --merge (convoy strategy)
-	BaseBranch string   // --base-branch
-	Account    string   // --account
-	Agent      string   // --agent
-	NoConvoy   bool     // --no-convoy
-	Owned      bool     // --owned
-	NoMerge    bool     // --no-merge
-	Force      bool     // --force
-	HookRawBead bool    // --hook-raw-bead
-	NoBoot     bool     // --no-boot
-	Mode       string   // --ralph: "" (normal) or "ralph"
-	ReviewOnly bool     // --review-only: review and report back only, no merge/commit/push
+	Args        string   // --args
+	Vars        []string // --var (key=value pairs)
+	Merge       string   // --merge (convoy strategy)
+	BaseBranch  string   // --base-branch
+	Account     string   // --account
+	Agent       string   // --agent
+	NoConvoy    bool     // --no-convoy
+	Owned       bool     // --owned
+	NoMerge     bool     // --no-merge
+	Force       bool     // --force
+	HookRawBead bool     // --hook-raw-bead
+	NoBoot      bool     // --no-boot
+	Mode        string   // --ralph: "" (normal) or "ralph"
+	ReviewOnly  bool     // --review-only: review and report back only, no merge/commit/push
 
 	// Execution behavior (set by caller, not serialized to queue)
 	SkipCook         bool   // Batch optimization: formula already cooked
@@ -44,6 +47,7 @@ type SlingParams struct {
 	CallerContext    string // Identifies the caller for shutdown messages (e.g., "queue-dispatch", "batch-sling")
 	TownRoot         string
 	BeadsDir         string
+	ClerkRequestID   string // supervised capability already consumed by gt clerk sling
 }
 
 // SlingResult captures the outcome of executeSling for caller-level tracking.
@@ -90,6 +94,20 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		townRoot, err = findTownRoot()
 		if err != nil {
 			return nil, err
+		}
+	}
+
+	// A Clerk process may only reach native dispatch after gt clerk sling has
+	// atomically consumed a human-issued capability. This check runs before the
+	// bead lock and before any Polecat/worktree/convoy mutation.
+	if os.Getenv("GT_ROLE") == constants.RoleClerk || os.Getenv("BD_ACTOR") == constants.RoleClerk {
+		if params.ClerkRequestID == "" {
+			return nil, fmt.Errorf("Clerk dispatch denied: use gt clerk request/authorize/sling")
+		}
+		request, err := clerk.NewAuthorizer(townRoot).Get(params.ClerkRequestID)
+		if err != nil || request.State != clerk.StateDispatching ||
+			request.BeadID != params.BeadID || request.RigName != params.RigName {
+			return nil, fmt.Errorf("Clerk dispatch denied: authorization is missing, invalid, or not bound to this bead and rig")
 		}
 	}
 

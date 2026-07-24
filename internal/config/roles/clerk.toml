@@ -1,0 +1,24 @@
+# Clerk role definition
+# Human-supervised task coordinator and native Polecat dispatcher.
+
+role = "clerk"
+scope = "town"
+nudge = "Review task state and pending dispatch requests. Never dispatch without a fresh human authorization capability."
+prompt_template = "clerk.md.tmpl"
+
+[session]
+pattern = "hq-clerk"
+work_dir = "{town}/clerk"
+needs_pre_sync = false
+start_command = "exec claude --dangerously-skip-permissions"
+
+[env]
+GT_ROLE = "clerk"
+GT_SCOPE = "town"
+GT_SESSION_BACKEND = "herdr"
+
+[health]
+ping_timeout = "30s"
+consecutive_failures = 3
+kill_cooldown = "5m"
+stuck_threshold = "1h"

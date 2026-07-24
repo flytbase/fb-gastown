@@ -45,6 +45,7 @@ type Role string
 
 const (
 	RoleMayor    Role = "mayor"
+	RoleClerk    Role = "clerk"
 	RoleDeacon   Role = "deacon"
 	RoleBoot     Role = "boot"
 	RoleWitness  Role = "witness"
@@ -553,7 +554,7 @@ var memoryTypeLabels = map[string]string{
 	"feedback":  "Behavioral Rules (from user feedback)",
 	"user":      "User Context",
 	"project":   "Project Context",
-	"reference":  "Reference Links",
+	"reference": "Reference Links",
 	"general":   "General",
 }
 
@@ -1038,6 +1039,8 @@ func buildRoleAnnouncement(ctx RoleContext) string {
 	switch ctx.Role {
 	case RoleMayor:
 		return "Mayor, checking in."
+	case RoleClerk:
+		return "Clerk, checking in under human supervision."
 	case RoleDeacon:
 		return "Deacon, checking in."
 	case RoleBoot:
@@ -1074,6 +1077,8 @@ func getAgentIdentity(ctx RoleContext) string {
 		return fmt.Sprintf("%s/polecats/%s", ctx.Rig, ctx.Polecat)
 	case RoleMayor:
 		return "mayor"
+	case RoleClerk:
+		return "clerk"
 	case RoleDeacon:
 		return "deacon"
 	case RoleBoot:
@@ -1145,6 +1150,10 @@ func getAgentBeadID(ctx RoleContext) string {
 	switch ctx.Role {
 	case RoleMayor:
 		return beads.MayorBeadIDTown()
+	case RoleClerk:
+		// Clerk has durable request state, but intentionally has no autonomous
+		// agent bead/hook that could trigger work execution.
+		return ""
 	case RoleDeacon:
 		return beads.DeaconBeadIDTown()
 	case RoleBoot:

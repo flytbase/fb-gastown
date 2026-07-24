@@ -257,7 +257,7 @@ func (r *Router) buildLabels(msg *Message) []string {
 // isTownLevelAddress returns true if the address is for a town-level agent or the overseer.
 func isTownLevelAddress(address string) bool {
 	addr := strings.TrimSuffix(address, "/")
-	return addr == constants.RoleMayor || addr == constants.RoleDeacon || addr == "overseer"
+	return addr == constants.RoleMayor || addr == constants.RoleClerk || addr == constants.RoleDeacon || addr == "overseer"
 }
 
 // isGroupAddress returns true if the address is a @group address.
@@ -1810,6 +1810,8 @@ func addressToAgentBeadID(address string) string {
 		return "" // Overseer is a human, no agent bead
 	case strings.HasPrefix(address, constants.RoleMayor):
 		return session.MayorSessionName()
+	case strings.HasPrefix(address, constants.RoleClerk):
+		return ""
 	case strings.HasPrefix(address, constants.RoleDeacon):
 		return session.DeaconSessionName()
 	}
@@ -1856,6 +1858,11 @@ func AddressToSessionIDs(address string) []string {
 	// Mayor address: "mayor/" or "mayor"
 	if strings.HasPrefix(address, constants.RoleMayor) {
 		return []string{session.MayorSessionName()}
+	}
+
+	// Clerk address: "clerk/" or "clerk"
+	if strings.HasPrefix(address, constants.RoleClerk) {
+		return []string{session.ClerkSessionName()}
 	}
 
 	// Deacon address: "deacon/" or "deacon"

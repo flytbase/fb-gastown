@@ -30,12 +30,12 @@ type RoleInfo struct {
 	Home          string `json:"home"`
 	Rig           string `json:"rig,omitempty"`
 	Polecat       string `json:"polecat,omitempty"`
-	EnvRole       string `json:"env_role,omitempty"`    // Value of GT_ROLE if set
-	CwdRole       Role   `json:"cwd_role,omitempty"`    // Role detected from cwd
-	Mismatch      bool   `json:"mismatch,omitempty"`    // True if env != cwd detection
+	EnvRole       string `json:"env_role,omitempty"`       // Value of GT_ROLE if set
+	CwdRole       Role   `json:"cwd_role,omitempty"`       // Role detected from cwd
+	Mismatch      bool   `json:"mismatch,omitempty"`       // True if env != cwd detection
 	EnvIncomplete bool   `json:"env_incomplete,omitempty"` // True if env was set but missing rig/polecat, filled from cwd
 	TownRoot      string `json:"town_root,omitempty"`
-	WorkDir       string `json:"work_dir,omitempty"`    // Current working directory
+	WorkDir       string `json:"work_dir,omitempty"` // Current working directory
 }
 
 var roleCmd = &cobra.Command{
@@ -271,6 +271,11 @@ func detectRole(cwd, townRoot string) RoleInfo {
 		return ctx
 	}
 
+	if len(parts) >= 1 && parts[0] == "clerk" {
+		ctx.Role = RoleClerk
+		return ctx
+	}
+
 	// Check for boot role: deacon/dogs/boot/
 	// Must check before deacon since boot is under deacon directory
 	if len(parts) >= 3 && parts[0] == "deacon" && parts[1] == "dogs" && parts[2] == "boot" {
@@ -349,6 +354,8 @@ func parseRoleString(s string) (Role, string, string) {
 	switch s {
 	case constants.RoleMayor:
 		return RoleMayor, "", ""
+	case constants.RoleClerk:
+		return RoleClerk, "", ""
 	case constants.RoleDeacon:
 		return RoleDeacon, "", ""
 	case "boot":
@@ -403,6 +410,8 @@ func (info RoleInfo) ActorString() string {
 	switch info.Role {
 	case RoleMayor:
 		return "mayor"
+	case RoleClerk:
+		return "clerk"
 	case RoleDeacon:
 		return "deacon"
 	case RoleWitness:
@@ -437,6 +446,8 @@ func getRoleHome(role Role, rig, polecat, townRoot string) string {
 	switch role {
 	case RoleMayor:
 		return filepath.Join(townRoot, "mayor")
+	case RoleClerk:
+		return filepath.Join(townRoot, "clerk")
 	case RoleDeacon:
 		return filepath.Join(townRoot, "deacon")
 	case RoleWitness:
@@ -607,6 +618,7 @@ func runRoleList(cmd *cobra.Command, args []string) error {
 		desc string
 	}{
 		{RoleMayor, "Global coordinator at mayor/"},
+		{RoleClerk, "Human-supervised task coordinator at clerk/"},
 		{RoleDeacon, "Background supervisor daemon"},
 		{RoleWitness, "Per-rig polecat lifecycle manager"},
 		{RoleRefinery, "Per-rig merge queue processor"},

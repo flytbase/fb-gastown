@@ -17,6 +17,11 @@ func MayorSessionName() string {
 	return HQPrefix + "mayor"
 }
 
+// ClerkSessionName returns the session name for the supervised Clerk.
+func ClerkSessionName() string {
+	return HQPrefix + "clerk"
+}
+
 // DeaconSessionName returns the session name for the Deacon agent.
 // One deacon per machine - multi-town requires containers/VMs for isolation.
 func DeaconSessionName() string {
