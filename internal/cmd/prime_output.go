@@ -101,6 +101,13 @@ func outputPrimeContext(ctx RoleContext) (string, error) {
 		} else {
 			fmt.Print(clerk.FormatExternalContext(snapshot))
 		}
+		if policy, policyErr := clerk.LoadPolicy(ctx.TownRoot); policyErr == nil && policy.Memory.Enabled {
+			if memory, memoryErr := clerk.RecallMemory(policy.Memory, "open pending active preference decision", 5); memoryErr == nil {
+				fmt.Print(memory)
+			} else {
+				fmt.Printf("\n## Private memory warning\n\n%v\n", memoryErr)
+			}
+		}
 	}
 	return output, nil
 }

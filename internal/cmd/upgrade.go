@@ -11,6 +11,7 @@ import (
 	"github.com/steveyegge/gastown/internal/cli"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/deps"
 	"github.com/steveyegge/gastown/internal/doctor"
 	"github.com/steveyegge/gastown/internal/formula"
 	"github.com/steveyegge/gastown/internal/hooks"
@@ -336,6 +337,34 @@ func upgradeClerk(townRoot string) upgradeResult {
 		fmt.Printf("     %s Clerk %s\n", style.SuccessPrefix, style.Dim.Render("present and valid"))
 	} else {
 		fmt.Printf("     %s Clerk %s\n", style.SuccessPrefix, style.Dim.Render("provisioned"))
+	}
+	policy, policyErr := clerk.LoadPolicy(townRoot)
+	if policyErr != nil {
+		result.details = append(result.details, fmt.Sprintf("memory policy: %v", policyErr))
+		return result
+	}
+	if policy.Memory.Enabled {
+		if upgradeDryRun {
+			fmt.Printf("     %s Private Clerk memory %s\n", style.SuccessPrefix, style.Dim.Render("configured"))
+			return result
+		}
+		gbrainInstall, ensureErr := deps.EnsureGBrain()
+		if ensureErr != nil {
+			result.details = append(result.details, fmt.Sprintf("GBrain dependency: %v", ensureErr))
+			fmt.Printf("     %s Could not ensure GBrain: %v\n", style.WarningPrefix, ensureErr)
+			return result
+		}
+		policy.Memory.GBrainBinary = gbrainInstall.Path
+		if _, memoryErr := clerk.ProvisionMemory(clerk.MemoryProvisionOptions{Policy: policy.Memory}); memoryErr != nil {
+			result.details = append(result.details, fmt.Sprintf("memory provisioning: %v", memoryErr))
+			fmt.Printf("     %s Could not provision private memory: %v\n", style.WarningPrefix, memoryErr)
+			return result
+		}
+		if setErr := clerk.SetMemoryPolicy(townRoot, policy.Memory); setErr != nil {
+			result.details = append(result.details, fmt.Sprintf("memory policy update: %v", setErr))
+			return result
+		}
+		fmt.Printf("     %s Private Clerk memory %s\n", style.SuccessPrefix, style.Dim.Render("present and healthy"))
 	}
 	return result
 }

@@ -598,11 +598,17 @@ func TestComputeExpectedNoBase(t *testing.T) {
 			t.Errorf("clerk missing native guard matcher: %s", matcher)
 		}
 	}
-	if len(clerk.UserPromptSubmit) != 1 || len(clerk.UserPromptSubmit[0].Hooks) != 2 {
-		t.Fatalf("clerk prompt injection hooks = %#v, want mail plus automatic worker context", clerk.UserPromptSubmit)
+	if len(clerk.UserPromptSubmit) != 1 || len(clerk.UserPromptSubmit[0].Hooks) != 3 {
+		t.Fatalf("clerk prompt injection hooks = %#v, want mail, worker context, and private memory", clerk.UserPromptSubmit)
 	}
 	if got := clerk.UserPromptSubmit[0].Hooks[1].Command; !strings.Contains(got, "gt clerk context") {
 		t.Fatalf("clerk worker context hook = %q, want gt clerk context", got)
+	}
+	if got := clerk.UserPromptSubmit[0].Hooks[2].Command; !strings.Contains(got, "gt clerk memory recall-hook") {
+		t.Fatalf("clerk memory hook = %q, want native memory recall", got)
+	}
+	if len(clerk.Stop) != 1 || len(clerk.Stop[0].Hooks) != 2 || !strings.Contains(clerk.Stop[0].Hooks[1].Command, "gt clerk memory capture-hook") {
+		t.Fatalf("clerk stop hooks = %#v, want costs plus selective memory capture", clerk.Stop)
 	}
 	if len(clerk.SessionStart) != len(defaultBase.SessionStart) {
 		t.Error("expected clerk to inherit SessionStart from DefaultBase")

@@ -11,7 +11,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 )
 
-const CurrentPolicyVersion = 2
+const CurrentPolicyVersion = 3
 
 // Policy is the native Clerk configuration persisted in the Town. Product
 // defaults and validation live in this package; clerk.json contains only the
@@ -21,6 +21,7 @@ type Policy struct {
 	Identity Identity      `json:"identity"`
 	Town     Town          `json:"town"`
 	Sessions SessionPolicy `json:"sessions,omitempty"`
+	Memory   MemoryPolicy  `json:"memory,omitempty"`
 	Routing  struct {
 		Mode           string                  `json:"mode"`
 		DefaultProfile string                  `json:"default_profile"`
@@ -160,6 +161,9 @@ func (p *Policy) Validate() error {
 			return fmt.Errorf("routing profile %q requires runtime_alias or agent", name)
 		}
 	}
+	if err := p.Memory.Validate(); err != nil {
+		return fmt.Errorf("memory: %w", err)
+	}
 	refs := make(map[string]bool)
 	for _, external := range p.Sessions.External {
 		if strings.TrimSpace(external.Name) == "" {
@@ -175,6 +179,37 @@ func (p *Policy) Validate() error {
 			}
 			refs[external.Alias] = true
 		}
+	}
+	return nil
+}
+
+// SetMemoryPolicy updates only Clerk's private-memory policy while preserving
+// unrelated integrations and custom fields in clerk.json.
+func SetMemoryPolicy(townRoot string, memory MemoryPolicy) error {
+	if err := memory.Validate(); err != nil {
+		return err
+	}
+	if memory.Enabled {
+		if err := verifyMemoryManifest(memory); err != nil {
+			return fmt.Errorf("private Clerk memory is not provisioned: %w", err)
+		}
+	}
+	path := filepath.Join(townRoot, "clerk", "clerk.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading Clerk policy %s: %w", path, err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("decoding Clerk policy for update: %w", err)
+	}
+	if err := RegisterMemoryPolicy(townRoot, memory); err != nil {
+		return err
+	}
+	raw["version"] = CurrentPolicyVersion
+	raw["memory"] = memory
+	if err := atomicfile.WriteJSONWithPerm(path, raw, 0600); err != nil {
+		return fmt.Errorf("writing Clerk memory policy: %w", err)
 	}
 	return nil
 }
@@ -324,6 +359,10 @@ func Provision(townRoot string, dryRun bool) (ProvisionResult, error) {
 		}
 		if err := json.Unmarshal(data, &existingConfig); err != nil {
 			return result, fmt.Errorf("decoding Clerk policy for migration: %w", err)
+		}
+		if version, ok := existingConfig["version"].(float64); ok && int(version) < CurrentPolicyVersion {
+			existingConfig["version"] = CurrentPolicyVersion
+			result.ConfigMigrated = true
 		}
 		if town, ok := existingConfig["town"].(map[string]any); ok {
 			for _, key := range []string{"runtime_observation", "terminal_backend", "tmux_allowed"} {

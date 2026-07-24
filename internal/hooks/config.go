@@ -271,6 +271,13 @@ func DefaultOverrides() map[string]*HooksConfig {
 					}},
 				},
 				{
+					Matcher: "Bash",
+					Hooks: []Hook{{
+						Type:    "command",
+						Command: hookChain(pathSetup, "gt clerk memory guard-command"),
+					}},
+				},
+				{
 					Matcher: "Bash(gt up*)|Bash(gt mayor*)|Bash(gt sling*)|Bash(gt assign*)|Bash(gt mountain*)",
 					Hooks: []Hook{{
 						Type:    "command",
@@ -306,6 +313,25 @@ func DefaultOverrides() map[string]*HooksConfig {
 						{
 							Type:    "command",
 							Command: hookChain(pathSetup, "gt clerk context"),
+						},
+						{
+							Type:    "command",
+							Command: hookChain(pathSetup, "gt clerk memory recall-hook"),
+						},
+					},
+				},
+			},
+			Stop: []HookEntry{
+				{
+					Matcher: "",
+					Hooks: []Hook{
+						{
+							Type:    "command",
+							Command: hookChain(pathSetup, "gt costs record &"),
+						},
+						{
+							Type:    "command",
+							Command: hookChain(pathSetup, "gt clerk memory capture-hook"),
 						},
 					},
 				},

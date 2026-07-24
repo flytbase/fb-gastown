@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -46,6 +47,15 @@ func (m *Manager) Start(agentOverride string) error {
 	workDir := filepath.Join(m.townRoot, "clerk")
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		return fmt.Errorf("creating Clerk directory: %w", err)
+	}
+	if policy, policyErr := LoadPolicy(m.townRoot); policyErr == nil && policy.Memory.Enabled {
+		runtimeConfig, _, resolveErr := config.ResolveAgentConfigWithOverride(m.townRoot, workDir, agentOverride)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if runtimeConfig.Hooks == nil || runtimeConfig.Hooks.Provider != "claude" {
+			return fmt.Errorf("private Clerk memory currently requires a Claude-compatible runtime with native Clerk policy hooks")
+		}
 	}
 
 	theme := tmux.ResolveSessionTheme(m.townRoot, "", constants.RoleClerk, "")

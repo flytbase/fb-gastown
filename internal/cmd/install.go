@@ -48,6 +48,10 @@ var (
 	installDoltPort       int
 	installSessionBackend string
 	installHerdrSession   string
+	installClerkMemory    string
+	installMemoryRoot     string
+	installGBrainMode     string
+	installSharedMemory   bool
 )
 
 var installCmd = &cobra.Command{
@@ -78,6 +82,7 @@ Examples:
   gt install ~/gt --shell                      # Install shell integration (sets GT_TOWN_ROOT/GT_RIG)
   gt install ~/gt --session-backend herdr      # Use Herdr instead of tmux for all agent sessions
   gt install ~/gt --session-backend herdr --herdr-session current
+  gt install ~/gt --clerk-memory gbrain        # Private long-term Clerk memory
   gt install ~/gt --supervisor                 # Configure launchd/systemd for daemon auto-restart`,
 	Args:         cobra.MaximumNArgs(1),
 	RunE:         runInstall,
@@ -99,6 +104,10 @@ func init() {
 	installCmd.Flags().IntVar(&installDoltPort, "dolt-port", 0, "Dolt SQL server port (default 3307; set when another instance owns the default port)")
 	installCmd.Flags().StringVar(&installSessionBackend, "session-backend", "", "Town-wide session backend: tmux (default) or herdr")
 	installCmd.Flags().StringVar(&installHerdrSession, "herdr-session", "", "Herdr session: current, managed, or an existing named session")
+	installCmd.Flags().StringVar(&installClerkMemory, "clerk-memory", "ask", "Private Clerk memory: ask, none, or gbrain")
+	installCmd.Flags().StringVar(&installMemoryRoot, "clerk-memory-root", "", "Private Clerk memory root (default: durable Gas Town data directory)")
+	installCmd.Flags().StringVar(&installGBrainMode, "gbrain-search-mode", clerk.MemorySearchConservative, "GBrain search mode: conservative, balanced, or tokenmax")
+	installCmd.Flags().BoolVar(&installSharedMemory, "shared-gbrain-readonly", false, "Allow Clerk to search an existing shared GBrain read-only")
 	rootCmd.AddCommand(installCmd)
 }
 
@@ -185,6 +194,21 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			"  Town root: %s\n\n"+
 			"Did you mean to update the binary? Run 'make install' in the gastown repo.\n"+
 			"Use --force to override (not recommended).", absPath, existingRoot)
+	}
+
+	memoryInstall, err := resolveClerkMemoryInstall(cmd, absPath, townName)
+	if err != nil {
+		return err
+	}
+	if memoryInstall.Policy.Enabled {
+		gbrainInstall, err := deps.EnsureGBrain()
+		if err != nil {
+			return fmt.Errorf("GBrain dependency check failed: %w", err)
+		}
+		memoryInstall.Policy.GBrainBinary = gbrainInstall.Path
+		if gbrainInstall.Installed {
+			fmt.Printf("   ✓ Installed managed GBrain %s\n", gbrainInstall.Version)
+		}
 	}
 
 	// Ensure beads (bd) is available before proceeding
@@ -405,6 +429,24 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		fmt.Printf("   ✓ Created clerk/ with native supervised policy and runtime settings\n")
 	} else {
 		fmt.Printf("   ✓ Preserved existing clerk/ policy and refreshed runtime settings\n")
+	}
+	if memoryInstall.Apply {
+		if memoryInstall.Policy.Enabled {
+			memoryResult, err := clerk.ProvisionMemory(clerk.MemoryProvisionOptions{Policy: memoryInstall.Policy})
+			if err != nil {
+				return fmt.Errorf("provisioning private Clerk memory: %w", err)
+			}
+			if err := clerk.SetMemoryPolicy(absPath, memoryInstall.Policy); err != nil {
+				return fmt.Errorf("saving Clerk memory policy: %w", err)
+			}
+			fmt.Printf("   ✓ Private Clerk memory: %s (%s, %s)\n",
+				memoryInstall.Policy.Root, memoryInstall.Policy.SearchMode, memoryResult.EmbeddingStatus)
+		} else {
+			if err := clerk.SetMemoryPolicy(absPath, memoryInstall.Policy); err != nil {
+				return fmt.Errorf("saving Clerk memory policy: %w", err)
+			}
+			fmt.Printf("   ✓ Private Clerk memory: disabled (existing data preserved)\n")
+		}
 	}
 
 	// Create boot directory (deacon/dogs/boot/) for Boot watchdog.

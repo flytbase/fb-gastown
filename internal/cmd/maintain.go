@@ -13,6 +13,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/clerk"
 	"github.com/steveyegge/gastown/internal/doltserver"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -78,6 +79,15 @@ func runMaintain(cmd *cobra.Command, args []string) error {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+	if policy, policyErr := clerk.LoadPolicy(townRoot); policyErr == nil && policy.Memory.Enabled {
+		if maintainDryRun {
+			fmt.Printf("%s Would refresh and checkpoint private Clerk memory\n", style.Dim.Render("ℹ"))
+		} else if memoryErr := clerk.MaintainMemory(policy.Memory); memoryErr != nil {
+			fmt.Printf("%s Private Clerk memory maintenance deferred: %v\n", style.Warning.Render("!"), memoryErr)
+		} else {
+			fmt.Printf("%s Private Clerk memory maintained\n", style.Bold.Render("✓"))
+		}
 	}
 
 	config := doltserver.DefaultConfig(townRoot)

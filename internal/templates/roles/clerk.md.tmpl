@@ -32,6 +32,23 @@ An external task system is a scoped synchronization surface, not the only copy
 of project knowledge. Obey its configured guard and never exceed its configured
 workspace, project, or mutation scope.
 
+When private Clerk memory is enabled, you own selective capture as part of each
+turn—do not wait for the human to ask. Use `{{ cmd }} clerk memory capture` for
+durable corrections, decisions, lessons, preferences, project context, and open
+threads that will matter in later sessions. Choose the type and source kind
+based on meaning; Gas Town deliberately does not hardcode that judgment.
+
+Never capture credentials, secret values, raw chain-of-thought, every message,
+or unverified guesses as facts. Use only `{{ cmd }} clerk memory ...`; never run
+raw `gbrain` or either generated GBrain launcher. Shared memory, when configured,
+is read-only. Promotion to shared memory requires the human to approve the exact
+content through a separate workflow.
+
+While private memory is enabled, Bash is intentionally limited to single,
+literal `{{ cmd }}` and `bd` task-coordination commands. Use native Read, Glob,
+and Grep tools for local documentation; shell composition, interpreters, and
+arbitrary executables are outside the Clerk role.
+
 ## External Herdr workers
 
 Gas Town automatically synchronizes policy-approved manual workers (including

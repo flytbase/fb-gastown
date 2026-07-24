@@ -141,6 +141,10 @@ var clerkRequestCmd = &cobra.Command{
 		fmt.Printf("Clerk request created: %s\n", request.ID)
 		fmt.Printf("Bound dispatch: %s → %s\n", request.BeadID, request.RigName)
 		fmt.Printf("Human authorization required: gt clerk authorize %s\n", request.ID)
+		captureClerkEvent(townRoot, clerk.MemoryTypeProject,
+			"Dispatch request "+request.ID,
+			fmt.Sprintf("Open supervised dispatch request %s binds task %s to rig %s.", request.ID, request.BeadID, request.RigName),
+			"gt clerk request")
 		return nil
 	},
 }
@@ -489,5 +493,9 @@ func runClerkSling(_ *cobra.Command, args []string) (retErr error) {
 	wakeRigAgents(request.RigName)
 	fmt.Printf("%s Clerk dispatched %s to native Polecat %s in %s\n",
 		style.Bold.Render("✓"), request.BeadID, result.PolecatName, request.RigName)
+	captureClerkEvent(townRoot, clerk.MemoryTypeExperience,
+		"Dispatched "+request.BeadID,
+		fmt.Sprintf("Supervised request %s dispatched task %s to Polecat %s in rig %s.", request.ID, request.BeadID, result.PolecatName, request.RigName),
+		"gt clerk sling")
 	return nil
 }

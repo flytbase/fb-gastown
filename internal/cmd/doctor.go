@@ -173,6 +173,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	d.Register(doctor.NewDoltBinaryCheck())
 	d.Register(doctor.NewClaudeBinaryCheck())
 	d.Register(doctor.NewSessionBackendCheck())
+	d.Register(doctor.NewClerkMemoryCheck())
 	d.Register(doctor.NewGroqCompoundCheck())
 	d.Register(doctor.NewDoltServerReachableCheck())
 
