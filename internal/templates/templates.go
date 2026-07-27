@@ -13,6 +13,7 @@ import (
 	"sync"
 	"text/template"
 
+	"github.com/steveyegge/gastown/internal/specialist"
 	"github.com/steveyegge/gastown/internal/templates/commands"
 )
 
@@ -56,19 +57,19 @@ type Templates struct {
 
 // RoleData contains information for rendering role contexts.
 type RoleData struct {
-	Role           string   // mayor, witness, refinery, polecat, crew, deacon
-	RigName        string   // e.g., "greenplace"
-	TownRoot       string   // e.g., "/Users/steve/ai"
-	TownName       string   // e.g., "ai" - the town identifier for session names
-	WorkDir        string   // current working directory
-	DefaultBranch  string   // default branch for merges (e.g., "main", "develop")
-	Polecat        string   // polecat name (for polecat role)
-	Polecats       []string // list of polecats (for witness role)
-	DogName        string   // dog name (for dog role)
-	BeadsDir       string   // BEADS_DIR path
-	IssuePrefix    string   // beads issue prefix
-	MayorSession   string   // e.g., "gt-ai-mayor" - dynamic mayor session name
-	DeaconSession  string   // e.g., "gt-ai-deacon" - dynamic deacon session name
+	Role          string   // mayor, witness, refinery, polecat, crew, deacon, or specialist kind
+	RigName       string   // e.g., "greenplace"
+	TownRoot      string   // e.g., "/Users/steve/ai"
+	TownName      string   // e.g., "ai" - the town identifier for session names
+	WorkDir       string   // current working directory
+	DefaultBranch string   // default branch for merges (e.g., "main", "develop")
+	Polecat       string   // polecat name (for polecat role)
+	Polecats      []string // list of polecats (for witness role)
+	DogName       string   // dog name (for dog role)
+	BeadsDir      string   // BEADS_DIR path
+	IssuePrefix   string   // beads issue prefix
+	MayorSession  string   // e.g., "gt-ai-mayor" - dynamic mayor session name
+	DeaconSession string   // e.g., "gt-ai-deacon" - dynamic deacon session name
 }
 
 // SpawnData contains information for spawn assignment messages.
@@ -167,7 +168,7 @@ func (t *Templates) RenderMessage(name string, data interface{}) (string, error)
 
 // RoleNames returns the list of available role templates.
 func (t *Templates) RoleNames() []string {
-	return []string{"mayor", "witness", "refinery", "polecat", "crew", "deacon", "boot"}
+	return []string{"mayor", "witness", "refinery", "polecat", "crew", "deacon", "boot", "surveyor", "scrutineer"}
 }
 
 // MessageNames returns the list of available message templates.
@@ -219,6 +220,11 @@ func CreateMayorCLAUDEmd(mayorDir, townRoot, townName, mayorSession, deaconSessi
 // to call `gt done` otherwise.
 const PolecatLifecycleMarker = "IDLE POLECAT HERESY"
 
+const (
+	specialistOverlayStart = "<!-- GT NATIVE SPECIALIST START -->"
+	specialistOverlayEnd   = "<!-- GT NATIVE SPECIALIST END -->"
+)
+
 // CreatePolecatCLAUDEmd writes the polecat CLAUDE.md template to the worktree.
 // This is the primary mechanism for polecats to learn about `gt done` and other
 // lifecycle commands — the file persists across compaction and session restarts.
@@ -266,6 +272,68 @@ func CreatePolecatCLAUDEmd(worktreePath, rigName, polecatName string) (bool, err
 
 	// No CLAUDE.md — write the full template there
 	return true, os.WriteFile(claudePath, []byte(content), 0644)
+}
+
+// SyncPolecatSpecialistCLAUDEmd keeps the persistent local instruction overlay
+// aligned with the current use of a reusable Polecat worktree. Operator and
+// project-local content outside the managed marker block is preserved.
+func SyncPolecatSpecialistCLAUDEmd(worktreePath, kind string, data RoleData) error {
+	localPath := filepath.Join(worktreePath, "CLAUDE.local.md")
+	existing, err := os.ReadFile(localPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	base := stripSpecialistOverlay(string(existing))
+	normalized := strings.TrimSpace(kind)
+	if normalized == "" {
+		if os.IsNotExist(err) || base == string(existing) {
+			return nil
+		}
+		return os.WriteFile(localPath, []byte(base), 0644)
+	}
+
+	definition, err := specialist.Resolve(normalized)
+	if err != nil {
+		return err
+	}
+	tmpl, err := New()
+	if err != nil {
+		return err
+	}
+	data.Role = definition.Kind
+	rendered, err := tmpl.RenderRole(definition.Kind, data)
+	if err != nil {
+		return err
+	}
+
+	content := strings.TrimRight(base, "\n")
+	if content != "" {
+		content += "\n\n"
+	}
+	content += specialistOverlayStart + "\n" +
+		"These native specialist rules override generic Polecat implementation and merge instructions elsewhere in this file.\n\n" +
+		rendered + "\n" + specialistOverlayEnd + "\n"
+	return os.WriteFile(localPath, []byte(content), 0644)
+}
+
+func stripSpecialistOverlay(content string) string {
+	for {
+		start := strings.Index(content, specialistOverlayStart)
+		if start < 0 {
+			return content
+		}
+		afterStart := content[start+len(specialistOverlayStart):]
+		endOffset := strings.Index(afterStart, specialistOverlayEnd)
+		if endOffset < 0 {
+			return content[:start]
+		}
+		end := start + len(specialistOverlayStart) + endOffset + len(specialistOverlayEnd)
+		if end < len(content) && content[end] == '\n' {
+			end++
+		}
+		content = content[:start] + content[end:]
+	}
 }
 
 // ProvisionCommands creates the .claude/commands/ directory with standard slash commands.

@@ -147,11 +147,12 @@ func runPrime(cmd *cobra.Command, args []string) (retErr error) {
 	warnRoleMismatch(roleInfo, cwd)
 
 	ctx := RoleContext{
-		Role:     roleInfo.Role,
-		Rig:      roleInfo.Rig,
-		Polecat:  roleInfo.Polecat,
-		TownRoot: townRoot,
-		WorkDir:  cwd,
+		Role:       roleInfo.Role,
+		Rig:        roleInfo.Rig,
+		Polecat:    roleInfo.Polecat,
+		Specialist: roleInfo.Specialist,
+		TownRoot:   townRoot,
+		WorkDir:    cwd,
 	}
 
 	// --state mode: output state only and exit
@@ -886,8 +887,13 @@ func outputAutonomousDirective(ctx RoleContext, hookedBead *beads.Issue, hasMole
 	// Without it, work lands but sessions accumulate and the merge queue stalls.
 	if ctx.Role == RolePolecat {
 		fmt.Println()
-		fmt.Printf("**⚠️ MANDATORY: When all work is committed, run `%s done` to submit and exit.**\n", cli.Name())
-		fmt.Printf("Do NOT stop at the prompt. Do NOT push to main directly. `%s done` is your final action.\n", cli.Name())
+		if ctx.Specialist != "" {
+			fmt.Printf("**⚠️ MANDATORY: When the report is recorded on the task, run `%s done --skip-verify` to clean up and exit.**\n", cli.Name())
+			fmt.Println("Do NOT modify code, commit, push, merge, or submit external review actions.")
+		} else {
+			fmt.Printf("**⚠️ MANDATORY: When all work is committed, run `%s done` to submit and exit.**\n", cli.Name())
+			fmt.Printf("Do NOT stop at the prompt. Do NOT push to main directly. `%s done` is your final action.\n", cli.Name())
+		}
 	}
 
 	fmt.Println()
@@ -900,8 +906,13 @@ func outputAutonomousDirective(ctx RoleContext, hookedBead *beads.Issue, hasMole
 		fmt.Println("- Skip molecule steps or work on the base bead directly")
 	}
 	if ctx.Role == RolePolecat {
-		fmt.Printf("- Sit idle after committing (run `%s done`)\n", cli.Name())
-		fmt.Println("- Push directly to main (use the merge queue)")
+		if ctx.Specialist != "" {
+			fmt.Printf("- Sit idle after reporting (run `%s done --skip-verify`)\n", cli.Name())
+			fmt.Println("- Modify code, commit, push, merge, or submit external review actions")
+		} else {
+			fmt.Printf("- Sit idle after committing (run `%s done`)\n", cli.Name())
+			fmt.Println("- Push directly to main (use the merge queue)")
+		}
 	}
 	fmt.Println()
 }

@@ -20,7 +20,7 @@ import (
 // See GH#3006.
 var IdentityEnvVars = []string{
 	"GT_ROLE", "GT_RIG", "GT_CREW", "GT_POLECAT", "GT_DOG_NAME",
-	"GT_SESSION", "GT_AGENT", "BD_ACTOR", "GIT_AUTHOR_NAME", "BEADS_AGENT_NAME",
+	"GT_SPECIALIST", "GT_SESSION", "GT_AGENT", "BD_ACTOR", "GIT_AUTHOR_NAME", "BEADS_AGENT_NAME",
 }
 
 // AgentEnvConfig specifies the configuration for generating agent environment variables.
@@ -35,6 +35,10 @@ type AgentEnvConfig struct {
 	// AgentName is the specific agent name (empty for singletons like witness/refinery)
 	// For polecats, this is the polecat name. For crew, this is the crew member name.
 	AgentName string
+
+	// Specialist is an optional native Polecat specialization, such as
+	// surveyor or scrutineer. The lifecycle role remains polecat.
+	Specialist string
 
 	// TownRoot is the root of the Gas Town workspace.
 	// Sets GT_ROOT environment variable.
@@ -126,6 +130,9 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 		// via DOLT_MERGE. Without this, concurrent polecats cause manifest
 		// contention leading to Dolt read-only mode (gt-5cc2p).
 		env["BD_DOLT_AUTO_COMMIT"] = "off"
+		if cfg.Specialist != "" {
+			env["GT_SPECIALIST"] = cfg.Specialist
+		}
 
 	case constants.RoleCrew:
 		env["GT_ROLE"] = fmt.Sprintf("%s/crew/%s", cfg.Rig, cfg.AgentName)

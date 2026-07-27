@@ -19,8 +19,8 @@ func TestAgentEnv_Mayor(t *testing.T) {
 	assertEnv(t, env, "GIT_AUTHOR_NAME", "mayor")
 	assertEnv(t, env, "GT_ROOT", "/town")
 	assertEnv(t, env, "GIT_CEILING_DIRECTORIES", "/town") // prevents git walking to umbrella
-	assertEnv(t, env, "NODE_OPTIONS", "")                  // cleared to prevent debugger inheritance
-	assertEnv(t, env, "CLAUDECODE", "")                    // cleared to prevent nested session detection
+	assertEnv(t, env, "NODE_OPTIONS", "")                 // cleared to prevent debugger inheritance
+	assertEnv(t, env, "CLAUDECODE", "")                   // cleared to prevent nested session detection
 	assertNotSet(t, env, "GT_RIG")
 }
 
@@ -55,8 +55,21 @@ func TestAgentEnv_Polecat(t *testing.T) {
 	assertEnv(t, env, "GIT_AUTHOR_NAME", "Toast")
 	assertEnv(t, env, "BEADS_AGENT_NAME", "myrig/Toast")
 	assertEnv(t, env, "BD_DOLT_AUTO_COMMIT", "off") // gt-5cc2p: prevent manifest contention
-	assertEnv(t, env, "NODE_OPTIONS", "")            // cleared to prevent debugger inheritance
-	assertEnv(t, env, "CLAUDECODE", "")              // cleared to prevent nested session detection
+	assertEnv(t, env, "NODE_OPTIONS", "")           // cleared to prevent debugger inheritance
+	assertEnv(t, env, "CLAUDECODE", "")             // cleared to prevent nested session detection
+}
+
+func TestAgentEnv_PolecatSpecialist(t *testing.T) {
+	env := AgentEnv(AgentEnvConfig{
+		Role:       "polecat",
+		Rig:        "myrig",
+		AgentName:  "Worker",
+		Specialist: "surveyor",
+	})
+
+	if got := env["GT_SPECIALIST"]; got != "surveyor" {
+		t.Fatalf("GT_SPECIALIST = %q, want surveyor", got)
+	}
 }
 
 func TestAgentEnv_Crew(t *testing.T) {
@@ -1245,7 +1258,7 @@ func TestAgentEnv_InjectsDoltPort(t *testing.T) {
 }
 
 func TestAgentEnv_NoDoltPortWithoutTownRoot(t *testing.T) {
-	t.Setenv("GT_DOLT_PORT", "")   // isolate from live Dolt server
+	t.Setenv("GT_DOLT_PORT", "")    // isolate from live Dolt server
 	t.Setenv("BEADS_DOLT_PORT", "") // isolate from live Dolt server
 	env := AgentEnv(AgentEnvConfig{
 		Role: "mayor",
@@ -1255,7 +1268,7 @@ func TestAgentEnv_NoDoltPortWithoutTownRoot(t *testing.T) {
 }
 
 func TestAgentEnv_NoDoltPortWithoutConfig(t *testing.T) {
-	t.Setenv("GT_DOLT_PORT", "")   // isolate from live Dolt server
+	t.Setenv("GT_DOLT_PORT", "")    // isolate from live Dolt server
 	t.Setenv("BEADS_DOLT_PORT", "") // isolate from live Dolt server
 	tmpDir := t.TempDir()
 	env := AgentEnv(AgentEnvConfig{

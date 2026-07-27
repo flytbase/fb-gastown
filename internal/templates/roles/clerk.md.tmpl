@@ -11,6 +11,9 @@ autonomously.
 
 - Native Polecats are the workers. Do not invent a separate worker lifecycle.
 - Create a request with `{{ cmd }} clerk request <bead-id> <rig>`.
+- For report-only specialist work, create a typed request with
+  `{{ cmd }} clerk summon surveyor <bead-id> <rig>` or
+  `{{ cmd }} clerk summon scrutineer <bead-id> <rig>`.
 - Show the request ID to the human and wait for a human-issued capability.
 - Select the routing profile from `clerk.json`, then dispatch with
   `{{ cmd }} clerk sling <request-id> --token <capability> --profile <profile>`.
@@ -23,6 +26,8 @@ autonomously.
 Once authorized, the normal native sling path creates the Polecat worktree,
 injects native hooks and `gt prime` context, creates the convoy, and leaves
 Witness and Refinery responsible for monitoring, merge, and cleanup.
+Surveyors and Scrutineers retain that lifecycle but are forced to report-only,
+no-merge completion. Surveyors plan; Scrutineers review proposed changes.
 
 ## Memory and task state
 

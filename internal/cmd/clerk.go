@@ -14,6 +14,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/herdr"
+	"github.com/steveyegge/gastown/internal/specialist"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -149,6 +150,45 @@ var clerkRequestCmd = &cobra.Command{
 	},
 }
 
+var clerkSummonCmd = &cobra.Command{
+	Use:   "summon <surveyor|scrutineer> <bead-id> <rig>",
+	Short: "Create a supervised native specialist dispatch request",
+	Args:  cobra.ExactArgs(3),
+	RunE: func(_ *cobra.Command, args []string) error {
+		townRoot, err := workspace.FindFromCwdOrError()
+		if err != nil {
+			return err
+		}
+		definition, err := specialist.Resolve(args[0])
+		if err != nil {
+			return err
+		}
+		request, err := clerk.NewAuthorizer(townRoot).CreateSpecialist(definition.Kind, args[1], args[2])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s request created: %s\n", definition.DisplayName, request.ID)
+		fmt.Printf("Bound report-only dispatch: %s → %s\n", request.BeadID, request.RigName)
+		fmt.Printf("Human authorization required: gt clerk authorize %s\n", request.ID)
+		captureClerkEvent(townRoot, clerk.MemoryTypeProject,
+			definition.DisplayName+" request "+request.ID,
+			fmt.Sprintf("Open supervised %s request %s binds task %s to rig %s.", definition.Kind, request.ID, request.BeadID, request.RigName),
+			"gt clerk summon")
+		return nil
+	},
+}
+
+var clerkSpecialistsCmd = &cobra.Command{
+	Use:   "specialists",
+	Short: "List native Clerk-supervised specialist kinds",
+	RunE: func(_ *cobra.Command, _ []string) error {
+		for _, definition := range specialist.List() {
+			fmt.Printf("%-12s %s\n", definition.Kind, definition.Summary)
+		}
+		return nil
+	},
+}
+
 var clerkAuthorizeCmd = &cobra.Command{
 	Use:   "authorize <request-id>",
 	Short: "Issue a one-use Clerk dispatch capability from a neutral human shell",
@@ -162,7 +202,13 @@ var clerkAuthorizeCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Authorized %s → %s until %s\n", request.BeadID, request.RigName, request.ExpiresAt.Format(time.RFC3339))
+		dispatchType := "Polecat"
+		if request.Specialist != "" {
+			if definition, resolveErr := specialist.Resolve(request.Specialist); resolveErr == nil {
+				dispatchType = definition.DisplayName
+			}
+		}
+		fmt.Printf("Authorized %s dispatch: %s → %s until %s\n", dispatchType, request.BeadID, request.RigName, request.ExpiresAt.Format(time.RFC3339))
 		fmt.Println("Capability (shown once):")
 		fmt.Println(token)
 		return nil
@@ -413,7 +459,7 @@ func init() {
 	clerkContextCmd.Flags().BoolVar(&clerkContextJSON, "json", false, "Print the persisted snapshot as JSON")
 
 	clerkCmd.AddCommand(clerkStartCmd, clerkStopCmd, clerkStatusCmd, clerkAttachCmd)
-	clerkCmd.AddCommand(clerkRequestCmd, clerkAuthorizeCmd, clerkSlingCmd)
+	clerkCmd.AddCommand(clerkRequestCmd, clerkSummonCmd, clerkSpecialistsCmd, clerkAuthorizeCmd, clerkSlingCmd)
 	clerkSessionsCmd.AddCommand(clerkSessionsAllowCmd, clerkSessionsListCmd, clerkSessionsAutoDiscoverCmd)
 	clerkSessionsCmd.AddCommand(clerkSessionsWorkspacesCmd, clerkSessionsPanesCmd, clerkSessionsReadCmd, clerkSessionsNudgeCmd)
 	clerkCmd.AddCommand(clerkSessionsCmd)
@@ -438,6 +484,7 @@ func runClerkSling(_ *cobra.Command, args []string) (retErr error) {
 		return err
 	}
 	authorizer := clerk.NewAuthorizer(townRoot)
+	dispatchedPolecat := ""
 
 	// This atomic transition happens before executeSling can create a Polecat,
 	// worktree, convoy, hook, or session.
@@ -446,10 +493,22 @@ func runClerkSling(_ *cobra.Command, args []string) (retErr error) {
 		return err
 	}
 	defer func() {
-		if completeErr := authorizer.Complete(request.ID, retErr); completeErr != nil && retErr == nil {
+		if completeErr := authorizer.Complete(request.ID, dispatchedPolecat, retErr); completeErr != nil && retErr == nil {
 			retErr = completeErr
 		}
 	}()
+
+	var specialistDefinition *specialist.Definition
+	if request.Specialist != "" {
+		definition, resolveErr := specialist.Resolve(request.Specialist)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		specialistDefinition = &definition
+		if clerkSlingFormula != "" {
+			return fmt.Errorf("native specialists are report-only and do not accept --formula")
+		}
+	}
 
 	workerAgent := clerkSlingAgent
 	if workerAgent == "" {
@@ -467,7 +526,7 @@ func runClerkSling(_ *cobra.Command, args []string) (retErr error) {
 	}
 
 	formula := resolveFormula(clerkSlingFormula, false, townRoot, request.RigName)
-	result, err := executeSling(SlingParams{
+	params := SlingParams{
 		BeadID:           request.BeadID,
 		RigName:          request.RigName,
 		FormulaName:      formula,
@@ -486,16 +545,35 @@ func runClerkSling(_ *cobra.Command, args []string) (retErr error) {
 		TownRoot:         townRoot,
 		BeadsDir:         filepath.Join(townRoot, ".beads"),
 		ClerkRequestID:   request.ID,
-	})
+	}
+	if specialistDefinition != nil {
+		applySpecialistDispatch(&params, *specialistDefinition)
+	}
+	result, err := executeSling(params)
 	if err != nil {
 		return err
 	}
+	dispatchedPolecat = result.PolecatName
 	wakeRigAgents(request.RigName)
-	fmt.Printf("%s Clerk dispatched %s to native Polecat %s in %s\n",
-		style.Bold.Render("✓"), request.BeadID, result.PolecatName, request.RigName)
+	workerLabel := "Polecat"
+	if specialistDefinition != nil {
+		workerLabel = specialistDefinition.DisplayName
+	}
+	fmt.Printf("%s Clerk dispatched %s to native %s %s in %s\n",
+		style.Bold.Render("✓"), request.BeadID, workerLabel, result.PolecatName, request.RigName)
 	captureClerkEvent(townRoot, clerk.MemoryTypeExperience,
 		"Dispatched "+request.BeadID,
 		fmt.Sprintf("Supervised request %s dispatched task %s to Polecat %s in rig %s.", request.ID, request.BeadID, result.PolecatName, request.RigName),
 		"gt clerk sling")
 	return nil
+}
+
+func applySpecialistDispatch(params *SlingParams, definition specialist.Definition) {
+	params.Specialist = definition.Kind
+	if definition.ReportOnly {
+		params.NoMerge = true
+		params.ReviewOnly = true
+		params.HookRawBead = true
+		params.FormulaName = ""
+	}
 }

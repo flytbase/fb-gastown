@@ -186,6 +186,7 @@ func TestDisplayLabel_AllTypes(t *testing.T) {
 		{"refinery", AgentSession{Name: "gt-refinery", Type: AgentRefinery, Rig: "gastown"}, "gastown/refinery"},
 		{"crew", AgentSession{Name: "gt-crew-max", Type: AgentCrew, Rig: "gastown", AgentName: "max"}, "crew/max"},
 		{"polecat", AgentSession{Name: "gt-furiosa", Type: AgentPolecat, Rig: "gastown", AgentName: "furiosa"}, "furiosa"},
+		{"surveyor", AgentSession{Name: "gt-worker", Type: AgentPolecat, Rig: "gastown", AgentName: "worker", Specialist: "surveyor"}, "worker (surveyor)"},
 	}
 
 	for _, tt := range tests {

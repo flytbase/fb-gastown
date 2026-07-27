@@ -16,6 +16,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/atomicfile"
 	"github.com/steveyegge/gastown/internal/lock"
+	"github.com/steveyegge/gastown/internal/specialist"
 )
 
 type RequestState string
@@ -39,6 +40,8 @@ type Request struct {
 	ID           string       `json:"id"`
 	BeadID       string       `json:"bead_id"`
 	RigName      string       `json:"rig_name"`
+	Specialist   string       `json:"specialist,omitempty"`
+	Polecat      string       `json:"polecat,omitempty"`
 	State        RequestState `json:"state"`
 	TokenHash    string       `json:"token_hash,omitempty"`
 	RequestedAt  time.Time    `json:"requested_at"`
@@ -79,6 +82,19 @@ func (a *Authorizer) ensureDir() error {
 
 // Create binds a new request to exactly one bead and rig.
 func (a *Authorizer) Create(beadID, rigName string) (*Request, error) {
+	return a.create(beadID, rigName, "")
+}
+
+// CreateSpecialist binds a native specialist kind to the supervised request.
+func (a *Authorizer) CreateSpecialist(kind, beadID, rigName string) (*Request, error) {
+	definition, err := specialist.Resolve(kind)
+	if err != nil {
+		return nil, err
+	}
+	return a.create(beadID, rigName, definition.Kind)
+}
+
+func (a *Authorizer) create(beadID, rigName, specialistKind string) (*Request, error) {
 	if strings.TrimSpace(beadID) == "" || strings.TrimSpace(rigName) == "" {
 		return nil, fmt.Errorf("bead id and rig name are required")
 	}
@@ -93,6 +109,7 @@ func (a *Authorizer) Create(beadID, rigName string) (*Request, error) {
 		ID:          id,
 		BeadID:      beadID,
 		RigName:     rigName,
+		Specialist:  specialistKind,
 		State:       StateRequested,
 		RequestedAt: a.now().UTC(),
 	}
@@ -106,8 +123,10 @@ func (a *Authorizer) Create(beadID, rigName string) (*Request, error) {
 // Authorize grants a short-lived, one-use capability. It must be called from a
 // neutral human shell, never from an agent role.
 func (a *Authorizer) Authorize(id string, ttl time.Duration) (string, *Request, error) {
-	if role := strings.TrimSpace(os.Getenv("GT_ROLE")); role != "" {
-		return "", nil, fmt.Errorf("%w: authorization must run outside an agent session (GT_ROLE=%s)", ErrUnauthorized, role)
+	for _, identityVar := range []string{"GT_ROLE", "GT_SESSION", "GT_POLECAT", "GT_CREW", "BD_ACTOR", "BEADS_AGENT_NAME"} {
+		if value := strings.TrimSpace(os.Getenv(identityVar)); value != "" {
+			return "", nil, fmt.Errorf("%w: authorization must run outside an agent session (%s=%s)", ErrUnauthorized, identityVar, value)
+		}
 	}
 	if ttl <= 0 {
 		ttl = 10 * time.Minute
@@ -161,13 +180,14 @@ func (a *Authorizer) Consume(id, token string) (*Request, error) {
 }
 
 // Complete records the outcome after native executeSling returns.
-func (a *Authorizer) Complete(id string, dispatchErr error) error {
+func (a *Authorizer) Complete(id, polecat string, dispatchErr error) error {
 	return a.update(id, func(request *Request) error {
 		if request.State != StateDispatching {
 			return fmt.Errorf("cannot complete Clerk request in state %s", request.State)
 		}
 		now := a.now().UTC()
 		request.CompletedAt = &now
+		request.Polecat = polecat
 		if dispatchErr != nil {
 			request.State = StateFailed
 			request.Error = dispatchErr.Error()

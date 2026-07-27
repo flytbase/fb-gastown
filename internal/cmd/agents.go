@@ -36,11 +36,12 @@ const (
 
 // AgentSession represents a categorized tmux session.
 type AgentSession struct {
-	Name      string
-	Type      AgentType
-	Rig       string // For rig-specific agents
-	AgentName string // e.g., crew name, polecat name
-	Socket    string // tmux socket name this session lives on
+	Name       string
+	Type       AgentType
+	Rig        string // For rig-specific agents
+	AgentName  string // e.g., crew name, polecat name
+	Specialist string // Native Polecat specialization declared by the session
+	Socket     string // tmux socket name this session lives on
 }
 
 // AgentTypeColors maps agent types to tmux color codes.
@@ -194,7 +195,20 @@ func getAgentSessions(includePolecats bool) ([]*AgentSession, error) {
 	if err != nil {
 		return nil, err
 	}
-	return filterAndSortSessions(sessions, includePolecats), nil
+	agents := filterAndSortSessions(sessions, includePolecats)
+	enrichSpecialistSessions(t, agents)
+	return agents, nil
+}
+
+func enrichSpecialistSessions(t *tmux.Tmux, agents []*AgentSession) {
+	for _, agent := range agents {
+		if agent.Type != AgentPolecat {
+			continue
+		}
+		if kind, err := t.GetEnvironment(agent.Name, "GT_SPECIALIST"); err == nil {
+			agent.Specialist = strings.TrimSpace(kind)
+		}
+	}
 }
 
 // socketGroup holds sessions for a single tmux socket.
@@ -256,6 +270,7 @@ func getAllSocketSessions(includePolecats bool) []socketGroup {
 	townTmux := tmux.NewTmuxWithSocket(townSocket) // explicit socket avoids default-socket ambiguity
 	if sessions, err := townTmux.ListSessions(); err == nil && len(sessions) > 0 {
 		agents := filterAndSortSessions(sessions, includePolecats)
+		enrichSpecialistSessions(townTmux, agents)
 		for _, a := range agents {
 			a.Socket = townSocket
 		}
@@ -401,6 +416,9 @@ func (a *AgentSession) displayLabel() string {
 	case AgentCrew:
 		return fmt.Sprintf("%s%s %s/crew/%s#[default]", color, icon, a.Rig, a.AgentName)
 	case AgentPolecat:
+		if a.Specialist != "" {
+			return fmt.Sprintf("%s%s %s/%s (%s)#[default]", color, icon, a.Rig, a.AgentName, a.Specialist)
+		}
 		return fmt.Sprintf("%s%s %s/%s#[default]", color, icon, a.Rig, a.AgentName)
 	case AgentPersonal:
 		return fmt.Sprintf("%s%s#[default]", color, a.Name)
@@ -620,7 +638,11 @@ func runAgentsList(cmd *cobra.Command, args []string) error {
 		case AgentCrew:
 			fmt.Printf("  %s crew/%s\n", icon, agent.AgentName)
 		case AgentPolecat:
-			fmt.Printf("  %s %s\n", icon, agent.AgentName)
+			if agent.Specialist != "" {
+				fmt.Printf("  %s %s (%s)\n", icon, agent.AgentName, agent.Specialist)
+			} else {
+				fmt.Printf("  %s %s\n", icon, agent.AgentName)
+			}
 		}
 	}
 

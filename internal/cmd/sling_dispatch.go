@@ -40,6 +40,7 @@ type SlingParams struct {
 	NoBoot      bool     // --no-boot
 	Mode        string   // --ralph: "" (normal) or "ralph"
 	ReviewOnly  bool     // --review-only: review and report back only, no merge/commit/push
+	Specialist  string   // native Clerk-supervised Polecat specialization
 
 	// Execution behavior (set by caller, not serialized to queue)
 	SkipCook         bool   // Batch optimization: formula already cooked
@@ -106,7 +107,8 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		}
 		request, err := clerk.NewAuthorizer(townRoot).Get(params.ClerkRequestID)
 		if err != nil || request.State != clerk.StateDispatching ||
-			request.BeadID != params.BeadID || request.RigName != params.RigName {
+			request.BeadID != params.BeadID || request.RigName != params.RigName ||
+			request.Specialist != params.Specialist {
 			return nil, fmt.Errorf("Clerk dispatch denied: authorization is missing, invalid, or not bound to this bead and rig")
 		}
 	}
@@ -181,6 +183,11 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		result.ErrMsg = "deferred"
 		return result, fmt.Errorf("bead %s is deferred (use --force to override)", params.BeadID)
 	}
+	if params.Specialist != "" && len(collectExistingMolecules(info)) > 0 {
+		result.ErrMsg = "specialist requires raw bead"
+		return result, fmt.Errorf("native specialist %s cannot dispatch bead %s with an attached molecule; use a raw planning or review task",
+			params.Specialist, params.BeadID)
+	}
 
 	// Send LIFECYCLE:Shutdown to the witness when force-stealing a bead from a
 	// live polecat. Without this, the old polecat becomes a zombie — still running
@@ -245,6 +252,7 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		HookBead:   params.BeadID,
 		Agent:      params.Agent,
 		BaseBranch: params.BaseBranch,
+		Specialist: params.Specialist,
 		// Create is always true for rig targets: executeSling only handles
 		// rig-targeted dispatch (batch sling + queue dispatch), where a fresh
 		// polecat must be spawned. The single-sling path (runSling) handles
@@ -371,6 +379,7 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		AttachedFormula:  params.FormulaName,
 		NoMerge:          params.NoMerge,
 		ReviewOnly:       params.ReviewOnly,
+		Specialist:       params.Specialist,
 		Mode:             params.Mode,
 		FormulaVars:      strings.Join(allVars, "\n"),
 	}

@@ -81,6 +81,25 @@ func TestSetAttachmentFieldsPreservesMode(t *testing.T) {
 	}
 }
 
+func TestAttachmentFieldsPreserveNativeSpecialist(t *testing.T) {
+	original := &AttachmentFields{Specialist: "scrutineer", ReviewOnly: true}
+	formatted := FormatAttachmentFields(original)
+	if !strings.Contains(formatted, "specialist: scrutineer") {
+		t.Fatalf("FormatAttachmentFields() = %q", formatted)
+	}
+	parsed := ParseAttachmentFields(&Issue{Description: formatted})
+	if parsed == nil || parsed.Specialist != "scrutineer" {
+		t.Fatalf("ParseAttachmentFields() = %#v", parsed)
+	}
+
+	updated := SetAttachmentFields(&Issue{
+		Description: "project note\nspecialist: surveyor",
+	}, original)
+	if strings.Count(updated, "specialist:") != 1 || !strings.Contains(updated, "specialist: scrutineer") {
+		t.Fatalf("SetAttachmentFields() = %q", updated)
+	}
+}
+
 // --- AgentFields Mode round-trip ---
 
 func TestAgentFieldsModeRoundTrip(t *testing.T) {

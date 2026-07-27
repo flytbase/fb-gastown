@@ -87,6 +87,15 @@ func doneContaminationBaseRef(defaultBranch, explicitTarget string) string {
 	return "origin/" + targetBranch
 }
 
+func validateReviewOnlyCompletion(reviewOnly bool, aheadCount int) error {
+	if reviewOnly && aheadCount > 0 {
+		return fmt.Errorf("cannot complete review-only task: branch contains %d code commit(s)\n"+
+			"Surveyors and Scrutineers must record findings on the task without committing, pushing, or merging code",
+			aheadCount)
+	}
+	return nil
+}
+
 func init() {
 	doneCmd.Flags().StringVar(&doneIssue, "issue", "", "Source issue ID (default: parse from branch name)")
 	doneCmd.Flags().IntVarP(&donePriority, "priority", "p", -1, "Override priority (0-4, default: inherit from issue)")
@@ -497,6 +506,20 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			return fmt.Errorf("cannot complete: working directory not available (worktree deleted?)\nUse --status DEFERRED to exit without completing")
 		}
 
+		// Load report-only/no-merge policy before checking git state so a
+		// specialist is never instructed to commit accidental code changes.
+		isNoMergeTask := false
+		isReviewOnlyTask := false
+		if issueID != "" {
+			noMergeBd := beads.New(cwd)
+			if noMergeIssue, showErr := noMergeBd.Show(issueID); showErr == nil {
+				if af := beads.ParseAttachmentFields(noMergeIssue); af != nil {
+					isNoMergeTask = af.NoMerge || af.ReviewOnly
+					isReviewOnlyTask = af.ReviewOnly
+				}
+			}
+		}
+
 		// Block if there are uncommitted changes (would be lost on completion).
 		// Runtime artifacts (.claude/, .beads/, .runtime/, __pycache__/) are
 		// excluded — these are toolchain-managed and normally gitignored.
@@ -507,6 +530,11 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			return fmt.Errorf("checking git status: %w", err)
 		}
 		if workStatus.HasUncommittedChanges && !workStatus.CleanExcludingRuntime() {
+			if isReviewOnlyTask {
+				return fmt.Errorf("cannot complete review-only task: worktree contains code changes\n"+
+					"Surveyors and Scrutineers must record findings on the task without modifying repository files\n"+
+					"Uncommitted: %s", workStatus.String())
+			}
 			return fmt.Errorf("cannot complete: uncommitted changes would be lost\nCommit your changes first, or use --status DEFERRED to exit without completing\nUncommitted: %s", workStatus.String())
 		}
 
@@ -524,18 +552,8 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			}
 		}
 
-		// Check no_merge or review_only flags on the hooked bead. When set,
-		// this is a non-code task (email, research, analysis, PRD review)
-		// where zero commits is expected.
-		// Must be checked before the zero-commit guard below (GH#2496, gt-kvf).
-		isNoMergeTask := false
-		if issueID != "" {
-			noMergeBd := beads.New(cwd)
-			if noMergeIssue, showErr := noMergeBd.Show(issueID); showErr == nil {
-				if af := beads.ParseAttachmentFields(noMergeIssue); af != nil && (af.NoMerge || af.ReviewOnly) {
-					isNoMergeTask = true
-				}
-			}
+		if err := validateReviewOnlyCompletion(isReviewOnlyTask, aheadCount); err != nil {
+			return err
 		}
 
 		// If no commits ahead, work was likely pushed directly to main (or already merged)

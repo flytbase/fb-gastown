@@ -29,6 +29,9 @@ func outputPrimeContext(ctx RoleContext) (string, error) {
 	// Try to use templates first
 	tmpl, err := templates.New()
 	if err != nil {
+		if ctx.Specialist != "" {
+			return "", fmt.Errorf("loading native %s template: %w", ctx.Specialist, err)
+		}
 		// Fall back to hardcoded output if templates fail
 		outputPrimeContextFallback(ctx)
 		return "", nil
@@ -48,7 +51,11 @@ func outputPrimeContext(ctx RoleContext) (string, error) {
 	case RoleRefinery:
 		roleName = constants.RoleRefinery
 	case RolePolecat:
-		roleName = constants.RolePolecat
+		if ctx.Specialist != "" {
+			roleName = ctx.Specialist
+		} else {
+			roleName = constants.RolePolecat
+		}
 	case RoleCrew:
 		roleName = constants.RoleCrew
 	case RoleBoot:
@@ -121,6 +128,9 @@ func outputPrimeContext(ctx RoleContext) (string, error) {
 // under t.Parallel).
 func outputRoleDirectives(ctx RoleContext, w io.Writer, explainEnabled bool) {
 	role := string(ctx.Role)
+	if ctx.Role == RolePolecat && ctx.Specialist != "" {
+		role = ctx.Specialist
+	}
 	townRoot := ctx.TownRoot
 	rigName := ctx.Rig
 
@@ -540,16 +550,22 @@ func outputStartupDirective(ctx RoleContext) {
 		fmt.Println()
 		fmt.Println("---")
 		fmt.Println()
-		fmt.Println("**STARTUP PROTOCOL**: You are a polecat with NO WORK on your hook.")
+		workerName := "polecat"
+		doneCommand := cli.Name() + " done"
+		if ctx.Specialist != "" {
+			workerName = ctx.Specialist
+			doneCommand += " --skip-verify"
+		}
+		fmt.Printf("**STARTUP PROTOCOL**: You are a %s with NO WORK on your hook.\n", workerName)
 		fmt.Println()
 		fmt.Println("1. Run `" + cli.Name() + " prime` (loads full context, mail, and pending work)")
 		fmt.Println("2. Check if any mail was injected above in this output")
 		fmt.Println("3. If you have mail with work instructions → execute that work")
-		fmt.Println("4. If NO mail → run `" + cli.Name() + " done` IMMEDIATELY")
+		fmt.Println("4. If NO mail → run `" + doneCommand + "` IMMEDIATELY")
 		fmt.Println()
 		fmt.Println("Polecat sessions are ephemeral. No work on hook + no mail = terminate.")
 		fmt.Println("DO NOT wait. DO NOT escalate. DO NOT send idle alerts.")
-		fmt.Println("Just run `" + cli.Name() + " done` and exit.")
+		fmt.Println("Just run `" + doneCommand + "` and exit.")
 	case RoleRefinery:
 		if stopped, reason := IsRigParkedOrDocked(ctx.TownRoot, ctx.Rig); stopped {
 			fmt.Println()

@@ -70,3 +70,47 @@ func TestExpiredAuthorizationCannotBeConsumed(t *testing.T) {
 		t.Fatalf("Consume() error = %v, want ErrExpired", err)
 	}
 }
+
+func TestSpecialistAuthorizationPreservesNativeKind(t *testing.T) {
+	authorizer := NewAuthorizer(t.TempDir())
+	request, err := authorizer.CreateSpecialist("surveyor", "gt-123", "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Specialist != "surveyor" {
+		t.Fatalf("request specialist = %q, want surveyor", request.Specialist)
+	}
+
+	token, authorized, err := authorizer.Authorize(request.ID, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authorized.Specialist != "surveyor" {
+		t.Fatalf("authorized specialist = %q, want surveyor", authorized.Specialist)
+	}
+
+	consumed, err := authorizer.Consume(request.ID, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if consumed.Specialist != "surveyor" {
+		t.Fatalf("consumed specialist = %q, want surveyor", consumed.Specialist)
+	}
+	if err := authorizer.Complete(request.ID, "Worker", nil); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := authorizer.Get(request.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.Polecat != "Worker" || completed.Specialist != "surveyor" {
+		t.Fatalf("completed request = %#v", completed)
+	}
+}
+
+func TestSpecialistRequestRejectsUnknownKind(t *testing.T) {
+	authorizer := NewAuthorizer(t.TempDir())
+	if _, err := authorizer.CreateSpecialist("planner", "gt-123", "api"); err == nil {
+		t.Fatal("CreateSpecialist accepted a non-native specialist kind")
+	}
+}

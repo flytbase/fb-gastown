@@ -22,6 +22,7 @@ import (
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/templates"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/util"
 )
@@ -76,6 +77,9 @@ type SessionStartOptions struct {
 	// If set, GT_AGENT is written to the tmux session environment table so that
 	// IsAgentAlive and waitForPolecatReady read the correct process names.
 	Agent string
+
+	// Specialist is an optional native specialization of this Polecat.
+	Specialist string
 }
 
 // SessionInfo contains information about a running polecat session.
@@ -414,6 +418,14 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 	if err := runtime.EnsureSettingsForRole(polecatSettingsDir, workDir, "polecat", runtimeConfig); err != nil {
 		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
+	if err := templates.SyncPolecatSpecialistCLAUDEmd(workDir, opts.Specialist, templates.RoleData{
+		RigName:  m.rig.Name,
+		TownRoot: townRoot,
+		WorkDir:  workDir,
+		Polecat:  polecat,
+	}); err != nil {
+		return fmt.Errorf("syncing specialist instructions: %w", err)
+	}
 
 	// Get fallback info to determine beacon content based on agent capabilities.
 	// Non-hook agents need "Run gt prime" in beacon; work instructions come as delayed nudge.
@@ -441,6 +453,7 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 			Role:        "polecat",
 			Rig:         m.rig.Name,
 			AgentName:   polecat,
+			Specialist:  opts.Specialist,
 			TownRoot:    townRoot,
 			Prompt:      beacon,
 			Issue:       opts.Issue,
@@ -471,6 +484,7 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 		Role:             "polecat",
 		Rig:              m.rig.Name,
 		AgentName:        polecat,
+		Specialist:       opts.Specialist,
 		TownRoot:         townRoot,
 		RuntimeConfigDir: opts.RuntimeConfigDir,
 		Agent:            opts.Agent,

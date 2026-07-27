@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/specialist"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -30,6 +31,7 @@ type RoleInfo struct {
 	Home          string `json:"home"`
 	Rig           string `json:"rig,omitempty"`
 	Polecat       string `json:"polecat,omitempty"`
+	Specialist    string `json:"specialist,omitempty"`
 	EnvRole       string `json:"env_role,omitempty"`       // Value of GT_ROLE if set
 	CwdRole       Role   `json:"cwd_role,omitempty"`       // Role detected from cwd
 	Mismatch      bool   `json:"mismatch,omitempty"`       // True if env != cwd detection
@@ -191,6 +193,15 @@ func GetRoleWithContext(cwd, townRoot string) (RoleInfo, error) {
 		info.Rig = rig
 		info.Polecat = polecat
 		info.Source = "env"
+		if parsedRole == RolePolecat {
+			if kind := strings.TrimSpace(os.Getenv("GT_SPECIALIST")); kind != "" {
+				definition, err := specialist.Resolve(kind)
+				if err != nil {
+					return RoleInfo{}, err
+				}
+				info.Specialist = definition.Kind
+			}
+		}
 
 		// For simple role strings like "crew" or "polecat", also check
 		// GT_RIG and GT_CREW/GT_POLECAT env vars for the full identity

@@ -88,6 +88,81 @@ func TestRenderRole_Polecat(t *testing.T) {
 	}
 }
 
+func TestRenderNativeSpecialists(t *testing.T) {
+	tmpl, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := RoleData{
+		RigName:  "myrig",
+		TownRoot: "/test/town",
+		WorkDir:  "/test/town/myrig/polecats/Worker",
+		Polecat:  "Worker",
+	}
+
+	for _, tc := range []struct {
+		kind string
+		name string
+	}{
+		{kind: "surveyor", name: "Surveyor"},
+		{kind: "scrutineer", name: "Scrutineer"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			output, err := tmpl.RenderRole(tc.kind, data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, expected := range []string{tc.name, "report-only", "gt done --skip-verify"} {
+				if !strings.Contains(output, expected) {
+					t.Errorf("output missing %q:\n%s", expected, output)
+				}
+			}
+		})
+	}
+}
+
+func TestSyncPolecatSpecialistCLAUDEmdReplacesAndClearsOverlay(t *testing.T) {
+	dir := t.TempDir()
+	localPath := filepath.Join(dir, "CLAUDE.local.md")
+	if err := os.WriteFile(localPath, []byte("project-local instructions\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	data := RoleData{RigName: "api", Polecat: "Worker", TownRoot: "/town", WorkDir: dir}
+
+	if err := SyncPolecatSpecialistCLAUDEmd(dir, "surveyor", data); err != nil {
+		t.Fatal(err)
+	}
+	surveyor, err := os.ReadFile(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(surveyor), "Surveyor Context") || !strings.Contains(string(surveyor), "project-local instructions") {
+		t.Fatalf("surveyor overlay = %s", surveyor)
+	}
+
+	if err := SyncPolecatSpecialistCLAUDEmd(dir, "scrutineer", data); err != nil {
+		t.Fatal(err)
+	}
+	scrutineer, err := os.ReadFile(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(scrutineer), "Surveyor Context") || !strings.Contains(string(scrutineer), "Scrutineer Context") {
+		t.Fatalf("scrutineer overlay = %s", scrutineer)
+	}
+
+	if err := SyncPolecatSpecialistCLAUDEmd(dir, "", data); err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := os.ReadFile(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(cleared), "Scrutineer Context") || !strings.Contains(string(cleared), "project-local instructions") {
+		t.Fatalf("cleared overlay = %s", cleared)
+	}
+}
+
 func TestRenderRole_Deacon(t *testing.T) {
 	tmpl, err := New()
 	if err != nil {
@@ -525,7 +600,7 @@ func TestRoleNames(t *testing.T) {
 	}
 
 	names := tmpl.RoleNames()
-	expected := []string{"mayor", "witness", "refinery", "polecat", "crew", "deacon", "boot"}
+	expected := []string{"mayor", "witness", "refinery", "polecat", "crew", "deacon", "boot", "surveyor", "scrutineer"}
 
 	if len(names) != len(expected) {
 		t.Errorf("RoleNames() = %v, want %v", names, expected)

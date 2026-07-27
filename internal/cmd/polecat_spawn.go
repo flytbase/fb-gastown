@@ -33,8 +33,9 @@ type SpawnedPolecatInfo struct {
 	Branch      string // Git branch name (for cleanup on rollback)
 
 	// Internal fields for deferred session start
-	account string
-	agent   string
+	account    string
+	agent      string
+	specialist string
 }
 
 // AgentID returns the agent identifier (e.g., "gastown/polecats/Toast")
@@ -55,6 +56,7 @@ type SlingSpawnOptions struct {
 	HookBead   string // Bead ID to set as hook_bead at spawn time (atomic assignment)
 	Agent      string // Agent override for this spawn (e.g., "gemini", "codex", "claude-haiku")
 	BaseBranch string // Override base branch for polecat worktree (e.g., "develop", "release/v2")
+	Specialist string // Native Clerk-supervised Polecat specialization
 }
 
 // SpawnPolecatForSling creates a fresh polecat and optionally starts its session.
@@ -229,6 +231,7 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 				Branch:      polecatObj.Branch,
 				account:     opts.Account,
 				agent:       opts.Agent,
+				specialist:  opts.Specialist,
 			}, nil
 		}
 	}
@@ -313,6 +316,7 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 		Branch:      polecatObj.Branch,
 		account:     opts.Account,
 		agent:       opts.Agent,
+		specialist:  opts.Specialist,
 	}, nil
 }
 
@@ -359,6 +363,7 @@ func (s *SpawnedPolecatInfo) StartSession() (string, error) {
 	startOpts := polecat.SessionStartOptions{
 		RuntimeConfigDir: claudeConfigDir,
 		Agent:            s.agent,
+		Specialist:       s.specialist,
 	}
 	if err := polecatSessMgr.Start(s.PolecatName, startOpts); err != nil {
 		return "", fmt.Errorf("starting session: %w", err)
