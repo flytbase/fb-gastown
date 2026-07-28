@@ -14,6 +14,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/doltserver"
 	"github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/state"
 )
 
 func setupTestTown(t *testing.T) (string, *config.RigsConfig) {
@@ -1461,6 +1462,260 @@ func TestAddRig_UpstreamURL(t *testing.T) {
 	})
 
 	_ = rig
+}
+
+func TestAddRig_ExistingWorktree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink-backed external worktrees require Windows privileges")
+	}
+
+	fakeBDForAddRig(t)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	root, rigsConfig := setupTestTown(t)
+	if err := os.MkdirAll(filepath.Join(root, "mayor"), 0755); err != nil {
+		t.Fatalf("mkdir Town mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write Town marker: %v", err)
+	}
+	sourceRepo := createTestGitRepoForRig(t, "existing-worktree")
+	worktreePath := filepath.Join(t.TempDir(), "user-created-worktree")
+	createWorktree := exec.Command("git", "-C", sourceRepo, "worktree", "add", "-b", "user-feature", worktreePath)
+	if out, err := createWorktree.CombinedOutput(); err != nil {
+		t.Fatalf("create user worktree: %v\n%s", err, out)
+	}
+	markerPath := filepath.Join(worktreePath, "local-uncommitted-note.txt")
+	if err := os.WriteFile(markerPath, []byte("must survive rig registration\n"), 0644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	externalBeadsDir := filepath.Join(worktreePath, ".beads")
+	if err := os.MkdirAll(externalBeadsDir, 0755); err != nil {
+		t.Fatalf("create external beads: %v", err)
+	}
+	externalBeadsConfig := filepath.Join(externalBeadsDir, "config.yaml")
+	if err := os.WriteFile(externalBeadsConfig, []byte("issue-prefix: at\n"), 0644); err != nil {
+		t.Fatalf("write external beads config: %v", err)
+	}
+	externalRedirect := filepath.Join(externalBeadsDir, "redirect")
+	if err := os.WriteFile(externalRedirect, []byte("../user-owned-beads\n"), 0644); err != nil {
+		t.Fatalf("write external redirect: %v", err)
+	}
+
+	manager := NewManager(root, rigsConfig, git.NewGit(root))
+	added, err := manager.AddRig(AddRigOptions{
+		Name:          "attached",
+		GitURL:        sourceRepo,
+		WorktreePath:  worktreePath,
+		BeadsPrefix:   "at",
+		SkipDoltCheck: true,
+	})
+	if err != nil {
+		t.Fatalf("AddRig with existing worktree: %v", err)
+	}
+
+	canonicalWorktree, err := filepath.EvalSymlinks(worktreePath)
+	if err != nil {
+		t.Fatalf("resolve worktree: %v", err)
+	}
+	mayorPath := filepath.Join(root, "attached", "mayor", "rig")
+
+	t.Run("mayor path links to existing worktree", func(t *testing.T) {
+		info, err := os.Lstat(mayorPath)
+		if err != nil {
+			t.Fatalf("lstat mayor path: %v", err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("mayor path mode = %v, want symlink", info.Mode())
+		}
+		target, err := filepath.EvalSymlinks(mayorPath)
+		if err != nil {
+			t.Fatalf("resolve mayor path: %v", err)
+		}
+		if target != canonicalWorktree {
+			t.Errorf("mayor target = %q, want %q", target, canonicalWorktree)
+		}
+	})
+
+	t.Run("local work remains untouched", func(t *testing.T) {
+		data, err := os.ReadFile(markerPath)
+		if err != nil {
+			t.Fatalf("external marker was removed: %v", err)
+		}
+		if string(data) != "must survive rig registration\n" {
+			t.Errorf("external marker changed to %q", data)
+		}
+		if data, err := os.ReadFile(externalBeadsConfig); err != nil {
+			t.Fatalf("external beads config was removed: %v", err)
+		} else if string(data) != "issue-prefix: at\n" {
+			t.Errorf("external beads config changed to %q", data)
+		}
+		if data, err := os.ReadFile(externalRedirect); err != nil {
+			t.Fatalf("external beads redirect was removed: %v", err)
+		} else if string(data) != "../user-owned-beads\n" {
+			t.Errorf("external beads redirect changed to %q", data)
+		}
+		if _, err := os.Stat(filepath.Join(root, "attached", ".beads", "redirect")); !os.IsNotExist(err) {
+			t.Errorf("rig beads unexpectedly redirects into external worktree, stat err=%v", err)
+		}
+	})
+
+	t.Run("worktree path is exposed and persisted", func(t *testing.T) {
+		if added.WorktreePath != canonicalWorktree {
+			t.Errorf("Rig.WorktreePath = %q, want %q", added.WorktreePath, canonicalWorktree)
+		}
+
+		cfg, err := LoadRigConfig(filepath.Join(root, "attached"))
+		if err != nil {
+			t.Fatalf("LoadRigConfig: %v", err)
+		}
+		if cfg.WorktreePath != canonicalWorktree {
+			t.Errorf("config WorktreePath = %q, want %q", cfg.WorktreePath, canonicalWorktree)
+		}
+		if got := rigsConfig.Rigs["attached"].WorktreePath; got != canonicalWorktree {
+			t.Errorf("registry WorktreePath = %q, want %q", got, canonicalWorktree)
+		}
+		registration, ok := state.FindWorktree(worktreePath)
+		if !ok {
+			t.Fatal("external worktree was not registered for Town discovery")
+		}
+		if registration.RigName != "attached" {
+			t.Errorf("registered rig = %q, want attached", registration.RigName)
+		}
+	})
+
+	t.Run("native refinery remains isolated", func(t *testing.T) {
+		refineryPath := filepath.Join(root, "attached", "refinery", "rig")
+		info, err := os.Lstat(refineryPath)
+		if err != nil {
+			t.Fatalf("lstat refinery: %v", err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			t.Fatal("refinery unexpectedly points at the external worktree")
+		}
+		if !git.NewGit(refineryPath).IsRepo() {
+			t.Fatal("refinery is not a git worktree")
+		}
+	})
+}
+
+func TestResolveExistingWorktree(t *testing.T) {
+	worktreePath := createTestGitRepoForRig(t, "resolve-worktree")
+	remotePath := filepath.Join(t.TempDir(), "remote.git")
+	if out, err := exec.Command("git", "clone", "--bare", worktreePath, remotePath).CombinedOutput(); err != nil {
+		t.Fatalf("create bare remote: %v\n%s", err, out)
+	}
+	addOrigin := exec.Command("git", "-C", worktreePath, "remote", "add", "origin", remotePath)
+	if out, err := addOrigin.CombinedOutput(); err != nil {
+		t.Fatalf("add origin: %v\n%s", err, out)
+	}
+
+	t.Run("infers URL and canonicalizes path", func(t *testing.T) {
+		gotPath, gotURL, err := resolveExistingWorktree(worktreePath, "")
+		if err != nil {
+			t.Fatalf("resolveExistingWorktree: %v", err)
+		}
+		wantPath, err := filepath.EvalSymlinks(worktreePath)
+		if err != nil {
+			t.Fatalf("canonicalize expected path: %v", err)
+		}
+		if gotPath != wantPath {
+			t.Errorf("path = %q, want %q", gotPath, wantPath)
+		}
+		if gotURL != remotePath {
+			t.Errorf("URL = %q, want %q", gotURL, remotePath)
+		}
+	})
+
+	t.Run("rejects mismatched explicit URL", func(t *testing.T) {
+		_, _, err := resolveExistingWorktree(worktreePath, "https://example.com/other.git")
+		if err == nil || !strings.Contains(err.Error(), "does not match") {
+			t.Fatalf("error = %v, want origin mismatch", err)
+		}
+	})
+
+	t.Run("rejects bare repository", func(t *testing.T) {
+		_, _, err := resolveExistingWorktree(remotePath, remotePath)
+		if err == nil || !strings.Contains(err.Error(), "bare repository") {
+			t.Fatalf("error = %v, want bare repository rejection", err)
+		}
+	})
+}
+
+func TestAddRig_RejectsWorktreeAlreadyAttachedToAnotherRig(t *testing.T) {
+	worktreePath := createTestGitRepoForRig(t, "duplicate-worktree")
+	canonicalPath, err := filepath.EvalSymlinks(worktreePath)
+	if err != nil {
+		t.Fatalf("canonicalize worktree: %v", err)
+	}
+	root, rigsConfig := setupTestTown(t)
+	rigsConfig.Rigs["first"] = config.RigEntry{
+		GitURL:       worktreePath,
+		WorktreePath: canonicalPath,
+	}
+
+	manager := NewManager(root, rigsConfig, git.NewGit(root))
+	_, err = manager.AddRig(AddRigOptions{
+		Name:          "second",
+		GitURL:        worktreePath,
+		WorktreePath:  worktreePath,
+		SkipDoltCheck: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), `already attached to rig "first"`) {
+		t.Fatalf("AddRig error = %v, want duplicate worktree rejection", err)
+	}
+}
+
+func TestAddRig_RollsBackWhenWorktreeDiscoveryCannotRegister(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink-backed external worktrees require Windows privileges")
+	}
+
+	fakeBDForAddRig(t)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	sourceRepo := createTestGitRepoForRig(t, "registration-conflict")
+	worktreePath := filepath.Join(t.TempDir(), "user-worktree")
+	createWorktree := exec.Command("git", "-C", sourceRepo, "worktree", "add", "-b", "conflict-feature", worktreePath)
+	if out, err := createWorktree.CombinedOutput(); err != nil {
+		t.Fatalf("create user worktree: %v\n%s", err, out)
+	}
+	markerPath := filepath.Join(worktreePath, "preserve-me")
+	if err := os.WriteFile(markerPath, []byte("user work\n"), 0644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	otherTown := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(otherTown, "mayor"), 0755); err != nil {
+		t.Fatalf("mkdir other town: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(otherTown, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write other town marker: %v", err)
+	}
+	if err := state.RegisterWorktree(worktreePath, otherTown, "other"); err != nil {
+		t.Fatalf("register conflicting worktree: %v", err)
+	}
+
+	root, rigsConfig := setupTestTown(t)
+	manager := NewManager(root, rigsConfig, git.NewGit(root))
+	_, err := manager.AddRig(AddRigOptions{
+		Name:          "attached",
+		GitURL:        sourceRepo,
+		WorktreePath:  worktreePath,
+		BeadsPrefix:   "at",
+		SkipDoltCheck: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "registering external worktree discovery") {
+		t.Fatalf("AddRig error = %v, want transactional discovery failure", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "attached")); !os.IsNotExist(statErr) {
+		t.Fatalf("managed rig was not rolled back, stat err=%v", statErr)
+	}
+	if data, readErr := os.ReadFile(markerPath); readErr != nil {
+		t.Fatalf("external worktree was removed: %v", readErr)
+	} else if string(data) != "user work\n" {
+		t.Errorf("external marker changed to %q", data)
+	}
 }
 
 // TestAddRig_BranchFlag verifies that --branch is passed to the bare clone so

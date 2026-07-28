@@ -80,3 +80,34 @@ func TestRemoveRigPathIfOwned_NoExpectedStampRemovesPath(t *testing.T) {
 		t.Fatalf("expected rig path to be removed, stat err=%v", err)
 	}
 }
+
+func TestRemoveRigPathIfOwned_DoesNotFollowExternalWorktreeSymlink(t *testing.T) {
+	externalPath := t.TempDir()
+	markerPath := filepath.Join(externalPath, "user-work")
+	if err := os.WriteFile(markerPath, []byte("preserve"), 0644); err != nil {
+		t.Fatalf("write external marker: %v", err)
+	}
+
+	rigPath := t.TempDir()
+	mayorDir := filepath.Join(rigPath, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	if err := os.Symlink(externalPath, filepath.Join(mayorDir, "rig")); err != nil {
+		t.Fatalf("link external worktree: %v", err)
+	}
+	if err := writeAddOwnershipStamp(rigPath, "owned"); err != nil {
+		t.Fatalf("write ownership stamp: %v", err)
+	}
+
+	removeRigPathIfOwned(rigPath, "owned")
+
+	if _, err := os.Stat(rigPath); !os.IsNotExist(err) {
+		t.Fatalf("expected rig path to be removed, stat err=%v", err)
+	}
+	if data, err := os.ReadFile(markerPath); err != nil {
+		t.Fatalf("external worktree was removed: %v", err)
+	} else if string(data) != "preserve" {
+		t.Fatalf("external marker changed to %q", data)
+	}
+}

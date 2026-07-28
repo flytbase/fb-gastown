@@ -124,6 +124,15 @@ func (c *GitExcludeConfiguredCheck) Run(ctx *CheckContext) *CheckResult {
 			Message: "No rig specified",
 		}
 	}
+	if isExternalMayorWorktree(rigPath) {
+		c.missingEntries = nil
+		c.excludePath = ""
+		return &CheckResult{
+			Name:    c.Name(),
+			Status:  StatusOK,
+			Message: "User-managed Mayor worktree excludes left unchanged",
+		}
+	}
 
 	// Check mayor/rig/ which is the authoritative clone
 	mayorRigPath := filepath.Join(rigPath, "mayor", "rig")
@@ -277,9 +286,9 @@ func (c *HooksPathConfiguredCheck) Run(ctx *CheckContext) *CheckResult {
 	c.unconfiguredClones = nil
 
 	// Check all clone locations
-	clonePaths := []string{
-		filepath.Join(rigPath, "mayor", "rig"),
-		filepath.Join(rigPath, "refinery", "rig"),
+	clonePaths := []string{filepath.Join(rigPath, "refinery", "rig")}
+	if !isExternalMayorWorktree(rigPath) {
+		clonePaths = append(clonePaths, filepath.Join(rigPath, "mayor", "rig"))
 	}
 
 	// Add crew clones
@@ -927,6 +936,21 @@ func (c *BeadsRedirectCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 
 	rigPath := ctx.RigPath()
+	if isExternalMayorWorktree(rigPath) {
+		if _, err := os.Stat(filepath.Join(rigPath, ".beads")); os.IsNotExist(err) {
+			return &CheckResult{
+				Name:    c.Name(),
+				Status:  StatusError,
+				Message: "No Town-managed .beads directory found at rig root",
+				FixHint: "Run 'gt doctor --fix --rig " + ctx.RigName + "' to initialize beads",
+			}
+		}
+		return &CheckResult{
+			Name:    c.Name(),
+			Status:  StatusOK,
+			Message: "External Mayor worktree uses Town-managed local beads",
+		}
+	}
 	mayorRigBeads := filepath.Join(rigPath, "mayor", "rig", ".beads")
 	rigBeadsDir := filepath.Join(rigPath, ".beads")
 	redirectPath := filepath.Join(rigBeadsDir, "redirect")
@@ -1029,9 +1053,11 @@ func (c *BeadsRedirectCheck) Fix(ctx *CheckContext) error {
 	redirectPath := filepath.Join(rigBeadsDir, "redirect")
 
 	// Check if tracked beads exist
-	hasTrackedBeads := true
-	if _, err := os.Stat(mayorRigBeads); os.IsNotExist(err) {
-		hasTrackedBeads = false
+	hasTrackedBeads := false
+	if !isExternalMayorWorktree(rigPath) {
+		if _, err := os.Stat(mayorRigBeads); err == nil {
+			hasTrackedBeads = true
+		}
 	}
 
 	// Check if local beads exist
@@ -1934,8 +1960,8 @@ func (c *BareRepoExistsCheck) Fix(ctx *CheckContext) error {
 // os.RemoveAll erases .repo.git/worktrees/<name>/HEAD; without this the
 // re-registration would silently default to main.
 type bareRepoWorktreeRef struct {
-	relPath  string // rig-relative worktree directory path
-	headRef  string // contents of the worktree's HEAD (e.g. "ref: refs/heads/foo\n"), empty if unreadable
+	relPath string // rig-relative worktree directory path
+	headRef string // contents of the worktree's HEAD (e.g. "ref: refs/heads/foo\n"), empty if unreadable
 }
 
 // collectBareRepoReferences returns refs for every worktree dir whose .git

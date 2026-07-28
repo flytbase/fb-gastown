@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/steveyegge/gastown/internal/state"
 )
 
 func realPath(t *testing.T, path string) string {
@@ -40,6 +42,34 @@ func TestFindWithPrimaryMarker(t *testing.T) {
 	}
 	if found != root {
 		t.Errorf("Find = %q, want %q", found, root)
+	}
+}
+
+func TestFindRegisteredExternalWorktree(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	townRoot := realPath(t, t.TempDir())
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatalf("mkdir town mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write town marker: %v", err)
+	}
+	worktreePath := realPath(t, t.TempDir())
+	nested := filepath.Join(worktreePath, "src")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatalf("mkdir worktree child: %v", err)
+	}
+	if err := state.RegisterWorktree(worktreePath, townRoot, "attached"); err != nil {
+		t.Fatalf("RegisterWorktree: %v", err)
+	}
+
+	got, err := Find(nested)
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	if got != townRoot {
+		t.Errorf("Find(external path) = %q, want %q", got, townRoot)
 	}
 }
 

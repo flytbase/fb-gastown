@@ -25,6 +25,7 @@ import (
 	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/session"
+	"github.com/steveyegge/gastown/internal/state"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/suggest"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -51,7 +52,7 @@ A rig is a container for managing a project and its agents:
 }
 
 var rigAddCmd = &cobra.Command{
-	Use:   "add <name> <git-url>",
+	Use:   "add <name> [git-url]",
 	Short: "Add a new rig to the workspace",
 	Long: `Add a new rig by cloning a repository.
 
@@ -74,6 +75,12 @@ Use --adopt to register an existing directory instead of creating new:
   - Reads existing config.json if present
   - Auto-detects git URL from origin remote (git-url argument not required)
   - Adds entry to mayor/rigs.json
+
+Use --worktree to attach an existing Git worktree as the rig's stable
+Mayor checkout. Gas Town leaves the worktree in place and continues to
+create native Refinery and Polecat worktrees:
+  gt rig add my_project --worktree /path/to/my-worktree
+  gt rig add my_project git@github.com:user/repo.git --worktree /path/to/my-worktree
 
 Example:
   gt rig add gastown https://github.com/steveyegge/gastown
@@ -296,31 +303,32 @@ Examples:
 
 // Flags
 var (
-	rigAddPrefix       string
-	rigAddLocalRepo    string
-	rigAddBranch       string
-	rigAddPushURL      string
-	rigAddUpstreamURL  string
-	rigAddAdopt           bool
+	rigAddPrefix         string
+	rigAddLocalRepo      string
+	rigAddWorktree       string
+	rigAddBranch         string
+	rigAddPushURL        string
+	rigAddUpstreamURL    string
+	rigAddAdopt          bool
 	rigAddAdoptURL       string
 	rigAddAdoptForce     bool
 	rigAddFilter         string
 	rigAddSparseCheckout []string
-	rigResetHandoff    bool
-	rigResetMail       bool
-	rigResetStale      bool
-	rigResetDryRun     bool
-	rigResetRole       string
-	rigShutdownForce   bool
-	rigShutdownNuclear bool
-	rigRebootForce     bool
-	rigRebootNuclear   bool
-	rigStopForce       bool
-	rigStopNuclear     bool
-	rigRestartForce    bool
-	rigRestartNuclear  bool
-	rigListJSON        bool
-	rigRemoveForce     bool
+	rigResetHandoff      bool
+	rigResetMail         bool
+	rigResetStale        bool
+	rigResetDryRun       bool
+	rigResetRole         string
+	rigShutdownForce     bool
+	rigShutdownNuclear   bool
+	rigRebootForce       bool
+	rigRebootNuclear     bool
+	rigStopForce         bool
+	rigStopNuclear       bool
+	rigRestartForce      bool
+	rigRestartNuclear    bool
+	rigListJSON          bool
+	rigRemoveForce       bool
 )
 
 var (
@@ -361,6 +369,7 @@ func init() {
 
 	rigAddCmd.Flags().StringVar(&rigAddPrefix, "prefix", "", "Beads issue prefix (default: derived from name)")
 	rigAddCmd.Flags().StringVar(&rigAddLocalRepo, "local-repo", "", "Local repo path to share git objects (optional)")
+	rigAddCmd.Flags().StringVar(&rigAddWorktree, "worktree", "", "Existing Git worktree to use as the rig's persistent Mayor checkout")
 	rigAddCmd.Flags().StringVar(&rigAddBranch, "branch", "", "Default branch name (default: auto-detected from remote)")
 	rigAddCmd.Flags().StringVar(&rigAddPushURL, "push-url", "", "Push URL for read-only upstreams (push to fork)")
 	rigAddCmd.Flags().StringVar(&rigAddUpstreamURL, "upstream-url", "", "Upstream repository URL (for fork workflows)")
@@ -481,17 +490,26 @@ func runRigAdd(cmd *cobra.Command, args []string) error {
 
 	// Handle --adopt mode: register existing directory
 	if rigAddAdopt {
+		if rigAddWorktree != "" {
+			return fmt.Errorf("--adopt and --worktree cannot be used together")
+		}
 		return runRigAdopt(cmd, args)
 	}
 
-	// Normal add mode requires git URL
-	if len(args) < 2 {
-		return fmt.Errorf("git-url is required (or use --adopt to register an existing directory)")
+	// A Git URL may be inferred from an existing worktree's origin.
+	if len(args) < 2 && rigAddWorktree == "" {
+		return fmt.Errorf("git-url is required (or use --worktree to attach an existing checkout, or --adopt to register an assembled rig)")
 	}
-	gitURL := args[1]
+	var gitURL string
+	if len(args) == 2 {
+		gitURL = args[1]
+	}
 
-	if !isGitRemoteURL(gitURL) {
+	if gitURL != "" && !isGitRemoteURL(gitURL) {
 		return fmt.Errorf("invalid git URL %q: expected a remote URL (e.g. https://, git@host:, ssh://, s3://, file:///abs/path)\n\nTo use a local repo as the source, pass a file:// URL. To register an already-assembled rig directory, use:\n  gt rig add %s --adopt", gitURL, name)
+	}
+	if rigAddWorktree != "" && len(rigAddSparseCheckout) > 0 {
+		return fmt.Errorf("--sparse-checkout cannot be used with --worktree; configure sparse checkout in the existing worktree directly")
 	}
 
 	// Ensure beads (bd) is available before proceeding
@@ -503,6 +521,17 @@ func runRigAdd(cmd *cobra.Command, args []string) error {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+	if rigAddWorktree != "" {
+		if registration, ok := state.FindWorktree(rigAddWorktree); ok {
+			canonicalTownRoot, resolveErr := filepath.EvalSymlinks(townRoot)
+			if resolveErr != nil {
+				canonicalTownRoot = townRoot
+			}
+			if registration.TownRoot != canonicalTownRoot || registration.RigName != name {
+				return fmt.Errorf("worktree is already registered to rig %q in Town %s", registration.RigName, registration.TownRoot)
+			}
+		}
 	}
 
 	// Load rigs config
@@ -521,7 +550,12 @@ func runRigAdd(cmd *cobra.Command, args []string) error {
 	mgr := rig.NewManager(townRoot, rigsConfig, g)
 
 	fmt.Printf("Creating rig %s...\n", style.Bold.Render(name))
-	fmt.Printf("  Repository: %s\n", gitURL)
+	if gitURL != "" {
+		fmt.Printf("  Repository: %s\n", gitURL)
+	}
+	if rigAddWorktree != "" {
+		fmt.Printf("  Existing worktree: %s\n", rigAddWorktree)
+	}
 	if rigAddLocalRepo != "" {
 		fmt.Printf("  Local repo: %s\n", rigAddLocalRepo)
 	}
@@ -567,6 +601,7 @@ func runRigAdd(cmd *cobra.Command, args []string) error {
 		UpstreamURL:    rigAddUpstreamURL,
 		BeadsPrefix:    rigAddPrefix,
 		LocalRepo:      rigAddLocalRepo,
+		WorktreePath:   rigAddWorktree,
 		DefaultBranch:  rigAddBranch,
 		CloneFilter:    rigAddFilter,
 		SparseCheckout: rigAddSparseCheckout,
@@ -587,8 +622,12 @@ func runRigAdd(cmd *cobra.Command, args []string) error {
 	var beadsWorkDir string
 	if newRig.Config.Prefix != "" {
 		mayorRigBeads := filepath.Join(townRoot, name, "mayor", "rig", ".beads")
-		if _, err := os.Stat(mayorRigBeads); err == nil {
-			beadsWorkDir = filepath.Join(townRoot, name, "mayor", "rig")
+		if newRig.WorktreePath == "" {
+			if _, err := os.Stat(mayorRigBeads); err == nil {
+				beadsWorkDir = filepath.Join(townRoot, name, "mayor", "rig")
+			} else {
+				beadsWorkDir = filepath.Join(townRoot, name)
+			}
 		} else {
 			beadsWorkDir = filepath.Join(townRoot, name)
 		}
@@ -598,7 +637,7 @@ func runRigAdd(cmd *cobra.Command, args []string) error {
 	if newRig.Config.Prefix != "" && beadsWorkDir != "" {
 		bd := beads.New(beadsWorkDir)
 		fields := &beads.RigFields{
-			Repo:   gitURL,
+			Repo:   newRig.GitURL,
 			Prefix: newRig.Config.Prefix,
 			State:  beads.RigStateActive,
 		}
@@ -667,7 +706,11 @@ func runRigAdd(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  ├── .repo.git/        (shared bare repo for refinery+polecats)\n")
 	fmt.Printf("  ├── .beads/           (prefix: %s)\n", newRig.Config.Prefix)
 	fmt.Printf("  ├── plugins/          (rig-level plugins)\n")
-	fmt.Printf("  ├── mayor/rig/        (clone: %s)\n", defaultBranch)
+	if newRig.WorktreePath != "" {
+		fmt.Printf("  ├── mayor/rig@        (external worktree: %s)\n", newRig.WorktreePath)
+	} else {
+		fmt.Printf("  ├── mayor/rig/        (clone: %s)\n", defaultBranch)
+	}
 	fmt.Printf("  ├── refinery/rig/     (worktree: %s, sees polecat branches)\n", defaultBranch)
 	fmt.Printf("  ├── crew/             (empty - add crew with 'gt crew add')\n")
 	fmt.Printf("  ├── witness/\n")
@@ -992,9 +1035,12 @@ func runRigRemove(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get the rig's beads prefix before removing (needed for route cleanup)
-	var beadsPrefix string
-	if entry, ok := rigsConfig.Rigs[name]; ok && entry.BeadsConfig != nil {
-		beadsPrefix = entry.BeadsConfig.Prefix
+	var beadsPrefix, worktreePath string
+	if entry, ok := rigsConfig.Rigs[name]; ok {
+		worktreePath = entry.WorktreePath
+		if entry.BeadsConfig != nil {
+			beadsPrefix = entry.BeadsConfig.Prefix
+		}
 	}
 
 	// Create rig manager
@@ -1065,6 +1111,11 @@ func runRigRemove(cmd *cobra.Command, args []string) error {
 	// Save updated config
 	if err := config.SaveRigsConfig(rigsPath, rigsConfig); err != nil {
 		return fmt.Errorf("saving rigs config: %w", err)
+	}
+	if worktreePath != "" {
+		if err := state.UnregisterWorktree(worktreePath); err != nil {
+			fmt.Printf("  %s Could not unregister external worktree discovery: %v\n", style.Warning.Render("!"), err)
+		}
 	}
 
 	// Remove rig from daemon.json patrol config (witness + refinery rigs arrays)

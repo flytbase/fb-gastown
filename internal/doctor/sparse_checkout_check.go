@@ -120,9 +120,9 @@ func (c *SparseCheckoutCheck) discoverRigPaths(townRoot string) []string {
 
 // checkRig checks all worktree repos within a single rig for legacy sparse checkout.
 func (c *SparseCheckoutCheck) checkRig(rigPath string) {
-	repoPaths := []string{
-		filepath.Join(rigPath, "mayor", "rig"),
-		filepath.Join(rigPath, "refinery", "rig"),
+	repoPaths := []string{filepath.Join(rigPath, "refinery", "rig")}
+	if !isExternalMayorWorktree(rigPath) {
+		repoPaths = append(repoPaths, filepath.Join(rigPath, "mayor", "rig"))
 	}
 
 	// Add crew clones

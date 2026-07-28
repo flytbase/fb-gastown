@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/state"
 )
 
 // ErrNotFound indicates no workspace was found.
@@ -25,11 +26,13 @@ const (
 	SecondaryMarker = "mayor"
 )
 
-// Find locates the town root by walking up from the given directory.
+// Find locates the town root by walking up from the given directory, then
+// consulting the machine-local registry for user-managed external worktrees.
 // It prefers mayor/town.json over mayor/ directory as workspace marker.
 // Always continues to the outermost workspace, correctly handling nested
 // workspace structures (e.g., rig directories with their own mayor/town.json).
-// Does not resolve symlinks to stay consistent with os.Getwd().
+// The ancestry scan does not resolve symlinks; registry lookup canonicalizes
+// paths so an external worktree can be recognized through path aliases.
 func Find(startDir string) (string, error) {
 	absDir, err := filepath.Abs(startDir)
 	if err != nil {
@@ -56,6 +59,9 @@ func Find(startDir string) (string, error) {
 		if parent == current {
 			if primaryMatch != "" {
 				return primaryMatch, nil
+			}
+			if registration, ok := state.FindWorktree(absDir); ok {
+				return registration.TownRoot, nil
 			}
 			return secondaryMatch, nil
 		}

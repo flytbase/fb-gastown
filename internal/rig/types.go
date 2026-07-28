@@ -23,6 +23,10 @@ type Rig struct {
 	// LocalRepo is an optional local repository used for reference clones.
 	LocalRepo string `json:"local_repo,omitempty"`
 
+	// WorktreePath is an optional user-managed worktree exposed at mayor/rig.
+	// Gas Town never owns or removes this path.
+	WorktreePath string `json:"worktree_path,omitempty"`
+
 	// Config is the rig-level configuration.
 	Config *config.BeadsConfig `json:"config,omitempty"`
 

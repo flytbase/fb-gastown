@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/state"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -84,8 +85,28 @@ func runRigDetect(cmd *cobra.Command, args []string) error {
 }
 
 func detectRigFromPath(townRoot, absPath string) string {
+	if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
+		absPath = resolved
+	}
 	rel, err := filepath.Rel(townRoot, absPath)
 	if err != nil || strings.HasPrefix(rel, "..") {
+		rigsConfig, loadErr := config.LoadRigsConfig(filepath.Join(townRoot, "mayor", "rigs.json"))
+		if loadErr != nil {
+			return ""
+		}
+		for rigName, entry := range rigsConfig.Rigs {
+			if entry.WorktreePath == "" {
+				continue
+			}
+			worktreePath, evalErr := filepath.EvalSymlinks(entry.WorktreePath)
+			if evalErr != nil {
+				continue
+			}
+			externalRel, relErr := filepath.Rel(worktreePath, absPath)
+			if relErr == nil && externalRel != ".." && !strings.HasPrefix(externalRel, ".."+string(filepath.Separator)) {
+				return rigName
+			}
+		}
 		return ""
 	}
 

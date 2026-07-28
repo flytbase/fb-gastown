@@ -164,6 +164,9 @@ cd ~/gt
 # Add your first project
 gt rig add myproject https://github.com/you/repo.git
 
+# Or attach a Git worktree you already created (origin URL is auto-detected)
+gt rig add myproject --worktree /path/to/myproject-worktree
+
 # Create your crew workspace
 gt crew add yourname --rig myproject
 cd myproject/crew/yourname

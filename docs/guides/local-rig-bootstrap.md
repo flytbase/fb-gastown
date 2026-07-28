@@ -33,6 +33,10 @@ What this does:
   `settings/`, and `.beads/` layout that Gas Town expects.
 - Optionally pins per-rig role agents in `settings/config.json`.
 
+Use `gt rig add <name> --worktree <path>` instead when the existing worktree
+itself should be the rig's persistent Mayor checkout. Gas Town preserves that
+checkout in place while still creating native Refinery and Polecat worktrees.
+
 When to still use `--adopt`:
 
 - You already have a real Gas Town rig directory that was created elsewhere and you

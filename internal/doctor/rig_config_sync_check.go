@@ -20,12 +20,12 @@ import (
 // can't find the beads prefix to check docked/parked status.
 type RigConfigSyncCheck struct {
 	FixableCheck
-	missingConfig    []string          // Rig names missing config.json
-	prefixMismatches []prefixMismatch  // Prefix mismatches between config.json and registry
-	missingRigBeads  []rigBeadInfo     // Rigs missing identity beads
-	missingDoltDB    []string          // Rigs missing Dolt database
-	missingPrefixCfg []string          // Rigs missing issue-prefix in config.yaml
-	dbNameMismatches []dbMismatch      // Dolt database name doesn't match prefix
+	missingConfig    []string         // Rig names missing config.json
+	prefixMismatches []prefixMismatch // Prefix mismatches between config.json and registry
+	missingRigBeads  []rigBeadInfo    // Rigs missing identity beads
+	missingDoltDB    []string         // Rigs missing Dolt database
+	missingPrefixCfg []string         // Rigs missing issue-prefix in config.yaml
+	dbNameMismatches []dbMismatch     // Dolt database name doesn't match prefix
 }
 
 type prefixMismatch struct {
@@ -41,10 +41,10 @@ type rigBeadInfo struct {
 }
 
 type dbMismatch struct {
-	rigName     string
-	prefix      string
-	currentDB   string
-	expectedDB  string
+	rigName    string
+	prefix     string
+	currentDB  string
+	expectedDB string
 }
 
 // NewRigConfigSyncCheck creates a new rig config sync check.
@@ -128,15 +128,14 @@ func (c *RigConfigSyncCheck) Run(ctx *CheckContext) *CheckResult {
 				rigName, configPrefix, expectedPrefix))
 		}
 
-		// Check beads configuration at mayor/rig/.beads
-		mayorRigBeads := filepath.Join(rigPath, "mayor", "rig", ".beads")
-		if _, err := os.Stat(mayorRigBeads); os.IsNotExist(err) {
-			details = append(details, fmt.Sprintf("Rig %s is missing mayor/rig/.beads directory", rigName))
+		beadsDir := rigBeadsDir(rigPath)
+		if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+			details = append(details, fmt.Sprintf("Rig %s is missing its managed .beads directory", rigName))
 			continue
 		}
 
 		// Check issue-prefix in config.yaml
-		configYamlPath := filepath.Join(mayorRigBeads, "config.yaml")
+		configYamlPath := filepath.Join(beadsDir, "config.yaml")
 		if data, err := os.ReadFile(configYamlPath); err == nil {
 			if !strings.Contains(string(data), "issue-prefix:") && expectedPrefix != "" {
 				c.missingPrefixCfg = append(c.missingPrefixCfg, rigName)
@@ -145,7 +144,7 @@ func (c *RigConfigSyncCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 
 		// Check metadata.json for Dolt database
-		metadataPath := filepath.Join(mayorRigBeads, "metadata.json")
+		metadataPath := filepath.Join(beadsDir, "metadata.json")
 		if _, err := os.Stat(metadataPath); os.IsNotExist(err) {
 			details = append(details, fmt.Sprintf("Rig %s is missing .beads/metadata.json", rigName))
 			continue
@@ -200,7 +199,7 @@ func (c *RigConfigSyncCheck) Run(ctx *CheckContext) *CheckResult {
 		// Check if rig identity bead exists
 		if configPrefix != "" {
 			rigBeadID := fmt.Sprintf("%s-rig-%s", configPrefix, rigName)
-			if !c.rigBeadExists(rigBeadID, rigPath) {
+			if !c.rigBeadExists(rigBeadID, rigBeadsWorkDir(rigPath)) {
 				c.missingRigBeads = append(c.missingRigBeads, rigBeadInfo{
 					rigName: rigName,
 					prefix:  configPrefix,
@@ -274,11 +273,12 @@ func (c *RigConfigSyncCheck) Fix(ctx *CheckContext) error {
 		}
 
 		rigCfg := &rig.RigConfig{
-			Type:      "rig",
-			Version:   1,
-			Name:      rigName,
-			GitURL:    entry.GitURL,
-			CreatedAt: entry.AddedAt,
+			Type:         "rig",
+			Version:      1,
+			Name:         rigName,
+			GitURL:       entry.GitURL,
+			WorktreePath: entry.WorktreePath,
+			CreatedAt:    entry.AddedAt,
 		}
 		if prefix != "" {
 			rigCfg.Beads = &rig.BeadsConfig{Prefix: prefix}
@@ -302,7 +302,7 @@ func (c *RigConfigSyncCheck) Fix(ctx *CheckContext) error {
 		}
 
 		rigPath := filepath.Join(ctx.TownRoot, rigName)
-		configYamlPath := filepath.Join(rigPath, "mayor", "rig", ".beads", "config.yaml")
+		configYamlPath := filepath.Join(rigBeadsDir(rigPath), "config.yaml")
 
 		// Read existing config
 		data, err := os.ReadFile(configYamlPath)
@@ -334,12 +334,12 @@ func (c *RigConfigSyncCheck) Fix(ctx *CheckContext) error {
 		}
 
 		rigPath := filepath.Join(ctx.TownRoot, rigName)
-		mayorRigPath := filepath.Join(rigPath, "mayor", "rig")
+		beadsWorkDir := rigBeadsWorkDir(rigPath)
 
 		// Run bd init --prefix <prefix> --force --destroy-token to create the database
 		destroyToken := fmt.Sprintf("DESTROY-%s", entry.BeadsConfig.Prefix)
 		cmd := exec.Command("bd", "init", "--prefix", entry.BeadsConfig.Prefix, "--force", "--destroy-token="+destroyToken)
-		cmd.Dir = mayorRigPath
+		cmd.Dir = beadsWorkDir
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("could not initialize Dolt DB for %s: %w\n%s", rigName, err, string(output))
 		}
@@ -349,7 +349,7 @@ func (c *RigConfigSyncCheck) Fix(ctx *CheckContext) error {
 	renamedDBs := false
 	for _, mismatch := range c.dbNameMismatches {
 		rigPath := filepath.Join(ctx.TownRoot, mismatch.rigName)
-		metadataPath := filepath.Join(rigPath, "mayor", "rig", ".beads", "metadata.json")
+		metadataPath := filepath.Join(rigBeadsDir(rigPath), "metadata.json")
 
 		// Read current metadata
 		metadataBytes, err := os.ReadFile(metadataPath)
@@ -423,9 +423,9 @@ func (c *RigConfigSyncCheck) Fix(ctx *CheckContext) error {
 	// Fix missing rig identity beads
 	for _, info := range c.missingRigBeads {
 		rigPath := filepath.Join(ctx.TownRoot, info.rigName)
-		mayorRigPath := filepath.Join(rigPath, "mayor", "rig")
+		beadsWorkDir := rigBeadsWorkDir(rigPath)
 
-		bd := beads.New(mayorRigPath)
+		bd := beads.New(beadsWorkDir)
 		fields := &beads.RigFields{
 			Repo:   info.gitURL,
 			Prefix: info.prefix,
@@ -439,7 +439,7 @@ func (c *RigConfigSyncCheck) Fix(ctx *CheckContext) error {
 		// Add status:docked label if the rig should be docked
 		rigBeadID := fmt.Sprintf("%s-rig-%s", info.prefix, info.rigName)
 		cmd := exec.Command("bd", "label", rigBeadID, "--add", "status:docked")
-		cmd.Dir = mayorRigPath
+		cmd.Dir = beadsWorkDir
 		_ = cmd.Run() // Best effort - ignore errors
 	}
 
@@ -463,12 +463,10 @@ func (c *RigConfigSyncCheck) doltDatabaseExists(ctx *CheckContext, dbName string
 }
 
 // rigBeadExists checks if a rig identity bead exists.
-func (c *RigConfigSyncCheck) rigBeadExists(rigBeadID, rigPath string) bool {
-	mayorRigPath := filepath.Join(rigPath, "mayor", "rig")
-
+func (c *RigConfigSyncCheck) rigBeadExists(rigBeadID, beadsWorkDir string) bool {
 	// Try to show the bead using bd
 	cmd := exec.Command("bd", "show", rigBeadID, "--json")
-	cmd.Dir = mayorRigPath
+	cmd.Dir = beadsWorkDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return false

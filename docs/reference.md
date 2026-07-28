@@ -543,9 +543,26 @@ export OPENCODE_PERMISSION='{"*":"allow"}'
 
 ```bash
 gt rig add <name> <url>
+gt rig add <name> --worktree <path>
 gt rig list
 gt rig remove <name>
 ```
+
+`--worktree` attaches an existing Git worktree as the rig's persistent
+`mayor/rig` checkout. The worktree stays at its original path and remains
+user-managed; Gas Town records its canonical path and links to it without
+moving, cleaning, checking out, or deleting it. The repository URL is inferred
+from `origin`, or it can be supplied explicitly after the rig name.
+The path-to-Town association is stored in Gas Town's machine state, so commands
+and shell rig detection work from the worktree's original location without
+adding marker files to the repository.
+
+Gas Town still creates the rig's shared bare repository and its native,
+isolated Refinery and Polecat worktrees. An existing worktree cannot be
+attached to multiple rigs, combined with `--adopt`, or combined with
+`--sparse-checkout`. Town Beads data and automatic doctor repairs stay inside
+the managed rig container; external Git configuration and repository Beads
+files are treated as read-only.
 
 ### Convoy Management (Primary Dashboard)
 

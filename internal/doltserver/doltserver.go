@@ -47,10 +47,10 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gofrs/flock"
+	"github.com/steveyegge/gastown/internal/atomicfile"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/atomicfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -3290,6 +3290,9 @@ func FindRigBeadsDir(townRoot, rigName string) string {
 	if rigName == "hq" {
 		return filepath.Join(townRoot, ".beads")
 	}
+	if rigUsesExternalWorktree(townRoot, rigName) {
+		return filepath.Join(townRoot, rigName, ".beads")
+	}
 
 	// Prefer mayor/rig/.beads (canonical location for tracked beads)
 	mayorBeads := filepath.Join(townRoot, rigName, "mayor", "rig", ".beads")
@@ -3329,6 +3332,13 @@ func FindOrCreateRigBeadsDir(townRoot, rigName string) (string, error) {
 		}
 		return dir, nil
 	}
+	if rigUsesExternalWorktree(townRoot, rigName) {
+		rigBeads := filepath.Join(townRoot, rigName, ".beads")
+		if err := os.MkdirAll(rigBeads, 0755); err != nil {
+			return "", fmt.Errorf("creating external rig beads dir: %w", err)
+		}
+		return rigBeads, nil
+	}
 
 	// Check mayor/rig/.beads first (canonical location).
 	// Use MkdirAll as an idempotent existence check+create to close the
@@ -3362,6 +3372,11 @@ func FindOrCreateRigBeadsDir(townRoot, rigName string) (string, error) {
 	}
 
 	return rigBeads, nil
+}
+
+func rigUsesExternalWorktree(townRoot, rigName string) bool {
+	rigConfig, err := config.LoadRigConfig(filepath.Join(townRoot, rigName, "config.json"))
+	return err == nil && rigConfig.WorktreePath != ""
 }
 
 // GetActiveConnectionCount queries the Dolt server to get the number of active connections.
@@ -3906,7 +3921,8 @@ func serverExecSQL(townRoot, query string) error {
 //
 // Dolt requires --host, --port, --user, --no-tls as global flags (before the
 // subcommand), not as subcommand flags. The order is:
-//   dolt --host=H --port=P --user=U --no-tls sql -q "..."
+//
+//	dolt --host=H --port=P --user=U --no-tls sql -q "..."
 func buildServerSQLCmd(ctx context.Context, config *Config, args ...string) *exec.Cmd {
 	// Global connection flags must come before the "sql" subcommand.
 	// Always pass --password to prevent dolt from prompting on stdin

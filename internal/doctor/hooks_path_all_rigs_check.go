@@ -101,8 +101,9 @@ func (c *HooksPathAllRigsCheck) Fix(ctx *CheckContext) error {
 func findRigClones(rigPath string) []string {
 	var clones []string
 
-	// Mayor clone
-	clones = append(clones, filepath.Join(rigPath, "mayor", "rig"))
+	if !isExternalMayorWorktree(rigPath) {
+		clones = append(clones, filepath.Join(rigPath, "mayor", "rig"))
+	}
 	// Refinery clone
 	clones = append(clones, filepath.Join(rigPath, "refinery", "rig"))
 
