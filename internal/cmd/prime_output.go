@@ -44,6 +44,8 @@ func outputPrimeContext(ctx RoleContext) (string, error) {
 		roleName = constants.RoleMayor
 	case RoleClerk:
 		roleName = constants.RoleClerk
+	case RoleAssayer:
+		roleName = constants.RoleAssayer
 	case RoleDeacon:
 		roleName = constants.RoleDeacon
 	case RoleWitness:
@@ -193,6 +195,10 @@ func outputPrimeContextFallback(ctx RoleContext) {
 		fmt.Println("# Clerk Context")
 		fmt.Println()
 		fmt.Println("You are the human-supervised Clerk. Use `gt clerk request`, wait for human authorization, then use `gt clerk sling`.")
+	case RoleAssayer:
+		fmt.Println("# Assayer Context")
+		fmt.Println()
+		fmt.Println("You are the human-supervised backend assurance Lead. Phase 1 is response-only and requires a one-use run capability.")
 	case RoleWitness:
 		outputWitnessContext(ctx)
 	case RoleRefinery:
@@ -401,6 +407,14 @@ func outputCommandQuickReference(ctx RoleContext) {
 		fmt.Printf("| Create human capability | Human runs `%s clerk authorize <request>` | Clerk must never run it |\n", c)
 		fmt.Printf("| Bypass supervision | Never use raw `%s sling` | Hard authorization boundary |\n", c)
 
+	case RoleAssayer:
+		fmt.Println("| Want to... | Correct command | Boundary |")
+		fmt.Println("|------------|----------------|----------|")
+		fmt.Printf("| Inspect authorized request | `%s assayer inspect <request>` | Read-only envelope |\n", c)
+		fmt.Printf("| List allowed workers | `%s assayer workers` | Workers cannot delegate |\n", c)
+		fmt.Printf("| Create capability | Human runs `%s assayer authorize <request>` | Assayer must never run it |\n", c)
+		fmt.Println("| Execute real backend tests | Not available in Phase 1 | Separate activation required |")
+
 	case RoleCrew:
 		fmt.Println("| Want to... | Correct command | Common mistake |")
 		fmt.Println("|------------|----------------|----------------|")
@@ -528,6 +542,14 @@ func outputStartupDirective(ctx RoleContext) {
 		fmt.Println("1. Load durable task state and local project documentation.")
 		fmt.Println("2. Check pending Clerk dispatch requests.")
 		fmt.Println("3. Never dispatch or authorize autonomously; await the human.")
+	case RoleAssayer:
+		fmt.Println()
+		fmt.Println("---")
+		fmt.Println()
+		fmt.Println("**STARTUP PROTOCOL**: You are the supervised Assayer.")
+		fmt.Println("1. Read assayer/assayer.json and its configured read-only context roots.")
+		fmt.Println("2. Inspect only a consumed, human-authorized Phase 1 request.")
+		fmt.Println("3. Use only native provisioned workers; never authorize yourself or execute real backend tests.")
 	case RoleWitness:
 		if stopped, reason := IsRigParkedOrDocked(ctx.TownRoot, ctx.Rig); stopped {
 			fmt.Println()

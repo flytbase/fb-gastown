@@ -112,6 +112,9 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 			return nil, fmt.Errorf("Clerk dispatch denied: authorization is missing, invalid, or not bound to this bead and rig")
 		}
 	}
+	if assayerDispatchDenied() {
+		return nil, fmt.Errorf("Assayer dispatch denied: use only host-native Phase 1 assurance workers")
+	}
 
 	// Acquire per-bead flock to prevent concurrent dispatch races (TOCTOU).
 	// The CLI path (runSling) has its own flock; this closes the gap where

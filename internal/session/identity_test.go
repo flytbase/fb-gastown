@@ -44,6 +44,11 @@ func TestParseSessionName(t *testing.T) {
 			wantRole: RoleDeacon,
 		},
 		{
+			name:     "assayer",
+			session:  "hq-assayer",
+			wantRole: RoleAssayer,
+		},
+		{
 			name:     "boot",
 			session:  "hq-boot",
 			wantRole: RoleDeacon,
@@ -411,6 +416,11 @@ func TestParseAddress(t *testing.T) {
 			name:    "deacon",
 			address: "deacon",
 			want:    AgentIdentity{Role: RoleDeacon},
+		},
+		{
+			name:    "assayer",
+			address: "assayer/",
+			want:    AgentIdentity{Role: RoleAssayer},
 		},
 		{
 			name:    "witness",

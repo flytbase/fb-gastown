@@ -59,6 +59,37 @@ func TestUpgradeClerkDryRunDoesNotWrite(t *testing.T) {
 	}
 }
 
+func TestUpgradeAssayerProvisionsNativeHeadAndWorkers(t *testing.T) {
+	townRoot := t.TempDir()
+	upgradeDryRun = false
+	result := upgradeAssayer(townRoot)
+	if result.changed == 0 {
+		t.Fatal("upgradeAssayer reported no changes for an empty Town")
+	}
+	for _, path := range []string{
+		filepath.Join(townRoot, "assayer", "assayer.json"),
+		filepath.Join(townRoot, "assayer", ".codex", "agents", "assurance-test-author.toml"),
+		filepath.Join(townRoot, "assayer", ".claude", "agents", "assurance-test-author.md"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected %s: %v", path, err)
+		}
+	}
+}
+
+func TestUpgradeAssayerDryRunDoesNotWrite(t *testing.T) {
+	townRoot := t.TempDir()
+	upgradeDryRun = true
+	t.Cleanup(func() { upgradeDryRun = false })
+	result := upgradeAssayer(townRoot)
+	if result.changed == 0 {
+		t.Fatal("upgradeAssayer dry run reported no pending changes")
+	}
+	if _, err := os.Stat(filepath.Join(townRoot, "assayer")); !os.IsNotExist(err) {
+		t.Fatal("dry run created assayer directory")
+	}
+}
+
 func TestUpgradeCLAUDEMD_CreatesMissingFile(t *testing.T) {
 	tmpDir := t.TempDir()
 

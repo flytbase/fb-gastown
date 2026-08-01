@@ -71,7 +71,7 @@ func EnsureSettingsForRole(settingsDir, workDir, role string, rc *config.Runtime
 
 func isTownHeadRole(role string) bool {
 	switch role {
-	case constants.RoleMayor, constants.RoleClerk, constants.RoleDeacon:
+	case constants.RoleMayor, constants.RoleClerk, constants.RoleAssayer, constants.RoleDeacon:
 		return true
 	default:
 		return false

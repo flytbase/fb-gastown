@@ -287,6 +287,11 @@ func detectRole(cwd, townRoot string) RoleInfo {
 		return ctx
 	}
 
+	if len(parts) >= 1 && parts[0] == "assayer" {
+		ctx.Role = RoleAssayer
+		return ctx
+	}
+
 	// Check for boot role: deacon/dogs/boot/
 	// Must check before deacon since boot is under deacon directory
 	if len(parts) >= 3 && parts[0] == "deacon" && parts[1] == "dogs" && parts[2] == "boot" {
@@ -367,6 +372,8 @@ func parseRoleString(s string) (Role, string, string) {
 		return RoleMayor, "", ""
 	case constants.RoleClerk:
 		return RoleClerk, "", ""
+	case constants.RoleAssayer:
+		return RoleAssayer, "", ""
 	case constants.RoleDeacon:
 		return RoleDeacon, "", ""
 	case "boot":
@@ -423,6 +430,8 @@ func (info RoleInfo) ActorString() string {
 		return "mayor"
 	case RoleClerk:
 		return "clerk"
+	case RoleAssayer:
+		return "assayer"
 	case RoleDeacon:
 		return "deacon"
 	case RoleWitness:
@@ -459,6 +468,8 @@ func getRoleHome(role Role, rig, polecat, townRoot string) string {
 		return filepath.Join(townRoot, "mayor")
 	case RoleClerk:
 		return filepath.Join(townRoot, "clerk")
+	case RoleAssayer:
+		return filepath.Join(townRoot, "assayer")
 	case RoleDeacon:
 		return filepath.Join(townRoot, "deacon")
 	case RoleWitness:
@@ -630,6 +641,7 @@ func runRoleList(cmd *cobra.Command, args []string) error {
 	}{
 		{RoleMayor, "Global coordinator at mayor/"},
 		{RoleClerk, "Human-supervised task coordinator at clerk/"},
+		{RoleAssayer, "Human-supervised backend assurance lead at assayer/"},
 		{RoleDeacon, "Background supervisor daemon"},
 		{RoleWitness, "Per-rig polecat lifecycle manager"},
 		{RoleRefinery, "Per-rig merge queue processor"},

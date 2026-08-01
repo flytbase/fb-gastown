@@ -46,6 +46,7 @@ type Role string
 const (
 	RoleMayor    Role = "mayor"
 	RoleClerk    Role = "clerk"
+	RoleAssayer  Role = "assayer"
 	RoleDeacon   Role = "deacon"
 	RoleBoot     Role = "boot"
 	RoleWitness  Role = "witness"
@@ -1052,6 +1053,8 @@ func buildRoleAnnouncement(ctx RoleContext) string {
 		return "Mayor, checking in."
 	case RoleClerk:
 		return "Clerk, checking in under human supervision."
+	case RoleAssayer:
+		return "Assayer, checking in for supervised backend assurance."
 	case RoleDeacon:
 		return "Deacon, checking in."
 	case RoleBoot:
@@ -1090,6 +1093,8 @@ func getAgentIdentity(ctx RoleContext) string {
 		return "mayor"
 	case RoleClerk:
 		return "clerk"
+	case RoleAssayer:
+		return "assayer"
 	case RoleDeacon:
 		return "deacon"
 	case RoleBoot:
@@ -1167,6 +1172,10 @@ func getAgentBeadID(ctx RoleContext) string {
 	case RoleClerk:
 		// Clerk has durable request state, but intentionally has no autonomous
 		// agent bead/hook that could trigger work execution.
+		return ""
+	case RoleAssayer:
+		// Assayer runs are activated through one-use human capabilities rather
+		// than autonomous task hooks.
 		return ""
 	case RoleDeacon:
 		return beads.DeaconBeadIDTown()

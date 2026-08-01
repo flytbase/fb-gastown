@@ -53,6 +53,22 @@ func TestRenderRole_Mayor(t *testing.T) {
 	}
 }
 
+func TestRenderRoleAssayer(t *testing.T) {
+	tmpl, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := tmpl.RenderRole("assayer", RoleData{TownRoot: "/test/town", WorkDir: "/test/town/assayer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"Assayer", "backend", "only spawner", "deterministic", "human authorization"} {
+		if !strings.Contains(output, expected) {
+			t.Errorf("Assayer role output missing %q:\n%s", expected, output)
+		}
+	}
+}
+
 func TestRenderRole_Polecat(t *testing.T) {
 	tmpl, err := New()
 	if err != nil {
@@ -600,7 +616,7 @@ func TestRoleNames(t *testing.T) {
 	}
 
 	names := tmpl.RoleNames()
-	expected := []string{"mayor", "witness", "refinery", "polecat", "crew", "deacon", "boot", "surveyor", "scrutineer"}
+	expected := []string{"mayor", "assayer", "witness", "refinery", "polecat", "crew", "deacon", "boot", "surveyor", "scrutineer"}
 
 	if len(names) != len(expected) {
 		t.Errorf("RoleNames() = %v, want %v", names, expected)

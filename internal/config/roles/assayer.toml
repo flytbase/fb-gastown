@@ -1,0 +1,23 @@
+# Assayer role definition
+# Human-authorized backend assurance lead and native sub-worker supervisor.
+
+role = "assayer"
+scope = "town"
+nudge = "Inspect only authorized backend-assurance work. Follow deterministic next actions and never decide truth or spawn outside the Phase 1 worker catalog."
+prompt_template = "assayer.md.tmpl"
+
+[session]
+pattern = "hq-assayer"
+work_dir = "{town}/assayer"
+needs_pre_sync = false
+start_command = "exec claude"
+
+[env]
+GT_ROLE = "assayer"
+GT_SCOPE = "town"
+
+[health]
+ping_timeout = "30s"
+consecutive_failures = 3
+kill_cooldown = "5m"
+stuck_threshold = "1h"

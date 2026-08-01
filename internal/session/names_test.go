@@ -19,6 +19,12 @@ func TestClerkSessionName(t *testing.T) {
 	}
 }
 
+func TestAssayerSessionName(t *testing.T) {
+	if got, want := AssayerSessionName(), "hq-assayer"; got != want {
+		t.Errorf("AssayerSessionName() = %q, want %q", got, want)
+	}
+}
+
 func TestFeedSessionName(t *testing.T) {
 	if got, want := FeedSessionName(), "hq-feed"; got != want {
 		t.Errorf("FeedSessionName() = %q, want %q", got, want)

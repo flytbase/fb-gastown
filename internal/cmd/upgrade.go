@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/assayer"
 	"github.com/steveyegge/gastown/internal/clerk"
 	"github.com/steveyegge/gastown/internal/cli"
 	"github.com/steveyegge/gastown/internal/config"
@@ -39,8 +40,9 @@ a new binary. It orchestrates all migration steps in the right order:
   2. CLAUDE.md sync       Update town root CLAUDE.md from embedded template
   3. Daemon defaults      Ensure daemon.json has lifecycle defaults
   4. Clerk provisioning   Ensure the native supervised Clerk is present
-  5. Hooks sync           Regenerate settings.json from hook registry
-  6. Formula update       Update formulas from embedded copies
+  5. Assayer provisioning Ensure the native supervised Assayer is present
+  6. Hooks sync           Regenerate settings.json from hook registry
+  7. Formula update       Update formulas from embedded copies
 
 Each step reports what changed. Use --dry-run to preview without modifying.
 
@@ -98,13 +100,17 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	r4 := upgradeClerk(townRoot)
 	results = append(results, r4)
 
-	// Step 5: Sync hooks registry to settings.json
-	r5 := upgradeHooksSync(townRoot)
+	// Step 5: Ensure the native supervised Assayer and worker definitions.
+	r5 := upgradeAssayer(townRoot)
 	results = append(results, r5)
 
-	// Step 6: Update formulas from embedded copies
-	r6 := upgradeFormulas(townRoot)
+	// Step 6: Sync hooks registry to settings.json
+	r6 := upgradeHooksSync(townRoot)
 	results = append(results, r6)
+
+	// Step 7: Update formulas from embedded copies
+	r7 := upgradeFormulas(townRoot)
+	results = append(results, r7)
 
 	// Print summary
 	printUpgradeSummary(results)
@@ -369,11 +375,56 @@ func upgradeClerk(townRoot string) upgradeResult {
 	return result
 }
 
+func upgradeAssayer(townRoot string) upgradeResult {
+	result := upgradeResult{step: "Assayer provisioning"}
+	fmt.Printf("\n  %s %s\n", style.Bold.Render("5."), "Ensuring native supervised Assayer...")
+	home := filepath.Join(townRoot, "assayer")
+	policyPath := filepath.Join(home, "assayer.json")
+	if _, err := os.Stat(policyPath); os.IsNotExist(err) {
+		result.changed = 1
+	}
+	for _, worker := range assayer.Workers() {
+		for _, path := range []string{
+			filepath.Join(home, ".codex", "agents", worker.Kind+".toml"),
+			filepath.Join(home, ".claude", "agents", worker.Kind+".md"),
+		} {
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				result.changed++
+			}
+		}
+	}
+	if upgradeDryRun {
+		if result.changed == 0 {
+			fmt.Printf("     %s Assayer %s\n", style.SuccessPrefix, style.Dim.Render("up-to-date"))
+		} else {
+			fmt.Printf("     %s Assayer %s\n", style.WarningPrefix, style.Dim.Render("would provision"))
+		}
+		return result
+	}
+	if err := assayer.EnsureHome(townRoot, ""); err != nil {
+		result.details = append(result.details, fmt.Sprintf("error provisioning: %v", err))
+		fmt.Printf("     %s Could not provision Assayer: %v\n", style.ErrorPrefix, err)
+		return result
+	}
+	runtimeConfig := config.ResolveRoleAgentConfig(constants.RoleAssayer, townRoot, home)
+	if err := runtime.EnsureSettingsForRole(home, home, constants.RoleAssayer, runtimeConfig); err != nil {
+		result.details = append(result.details, fmt.Sprintf("runtime settings: %v", err))
+		fmt.Printf("     %s Could not sync Assayer runtime settings: %v\n", style.WarningPrefix, err)
+		return result
+	}
+	if _, err := assayer.LoadPolicy(townRoot); err != nil {
+		result.details = append(result.details, fmt.Sprintf("policy: %v", err))
+		return result
+	}
+	fmt.Printf("     %s Assayer %s\n", style.SuccessPrefix, style.Dim.Render("present and valid"))
+	return result
+}
+
 // upgradeHooksSync syncs hook registry to all settings.json files.
 func upgradeHooksSync(townRoot string) upgradeResult {
 	result := upgradeResult{step: "Hooks sync"}
 
-	fmt.Printf("\n  %s %s\n", style.Bold.Render("5."), "Syncing hooks to settings.json...")
+	fmt.Printf("\n  %s %s\n", style.Bold.Render("6."), "Syncing hooks to settings.json...")
 
 	targets, err := hooks.DiscoverTargets(townRoot)
 	if err != nil {
@@ -463,7 +514,7 @@ func upgradeHooksSync(townRoot string) upgradeResult {
 func upgradeFormulas(townRoot string) upgradeResult {
 	result := upgradeResult{step: "Formulas"}
 
-	fmt.Printf("\n  %s %s\n", style.Bold.Render("6."), "Updating formulas from embedded copies...")
+	fmt.Printf("\n  %s %s\n", style.Bold.Render("7."), "Updating formulas from embedded copies...")
 
 	if upgradeDryRun {
 		// In dry-run mode, just check health

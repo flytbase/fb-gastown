@@ -168,7 +168,7 @@ func (t *Templates) RenderMessage(name string, data interface{}) (string, error)
 
 // RoleNames returns the list of available role templates.
 func (t *Templates) RoleNames() []string {
-	return []string{"mayor", "witness", "refinery", "polecat", "crew", "deacon", "boot", "surveyor", "scrutineer"}
+	return []string{"mayor", "assayer", "witness", "refinery", "polecat", "crew", "deacon", "boot", "surveyor", "scrutineer"}
 }
 
 // MessageNames returns the list of available message templates.

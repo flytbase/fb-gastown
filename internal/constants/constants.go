@@ -242,6 +242,9 @@ const (
 	// RoleClerk is the supervised task and dispatch coordinator role.
 	RoleClerk = "clerk"
 
+	// RoleAssayer is the supervised backend-assurance lead role.
+	RoleAssayer = "assayer"
+
 	// RoleWitness is the witness agent role.
 	RoleWitness = "witness"
 
@@ -269,6 +272,9 @@ const (
 
 	// EmojiClerk is the clerk emoji.
 	EmojiClerk = "📋"
+
+	// EmojiAssayer is the backend assurance emoji.
+	EmojiAssayer = "⚗️"
 
 	// EmojiDeacon is the deacon emoji (wolf in the engine room).
 	EmojiDeacon = "🐺"
@@ -339,6 +345,8 @@ func RoleEmoji(role string) string {
 		return EmojiMayor
 	case RoleClerk:
 		return EmojiClerk
+	case RoleAssayer:
+		return EmojiAssayer
 	case RoleDeacon:
 		return EmojiDeacon
 	case RoleWitness:

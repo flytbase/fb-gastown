@@ -15,6 +15,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/assayer"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/clerk"
 	"github.com/steveyegge/gastown/internal/cli"
@@ -65,6 +66,7 @@ the root of your workspace where all rigs and agents live. It contains:
   - CLAUDE.md            Mayor role context (Mayor runs from HQ root)
   - mayor/               Mayor config, state, and rig registry
   - clerk/               Supervised task coordination and dispatch policy
+  - assayer/             Supervised backend assurance policy and native worker roles
   - .beads/              Town-level beads DB (hq-* prefix for mayor mail)
 
 If path is omitted, uses the current directory.
@@ -447,6 +449,19 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			}
 			fmt.Printf("   ✓ Private Clerk memory: disabled (existing data preserved)\n")
 		}
+	}
+
+	// Create the native Assayer head. Product-specific backend assurance
+	// context is configured later from a neutral human shell.
+	if err := assayer.EnsureHome(absPath, ""); err != nil {
+		return fmt.Errorf("provisioning Assayer: %w", err)
+	}
+	assayerDir := filepath.Join(absPath, "assayer")
+	assayerRuntimeConfig := config.ResolveRoleAgentConfig(constants.RoleAssayer, absPath, assayerDir)
+	if err := runtime.EnsureSettingsForRole(assayerDir, assayerDir, constants.RoleAssayer, assayerRuntimeConfig); err != nil {
+		fmt.Printf("   %s Could not create Assayer settings: %v\n", style.Dim.Render("⚠"), err)
+	} else {
+		fmt.Printf("   ✓ Created assayer/ with supervised Phase 1 policy and native worker roles\n")
 	}
 
 	// Create boot directory (deacon/dogs/boot/) for Boot watchdog.

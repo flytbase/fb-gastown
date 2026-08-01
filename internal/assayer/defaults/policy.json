@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "enabled": true,
+  "phase": "phase1",
+  "domain": "backend-testing",
+  "context_roots": [],
+  "modes": [
+    "harden",
+    "discover",
+    "tdd",
+    "preserve",
+    "optimize",
+    "removal_assessment",
+    "test_maintenance"
+  ],
+  "authorization_ttl": "10m",
+  "limits": {
+    "max_concurrent_workers": 3,
+    "max_worker_spawns": 6,
+    "delegation_depth": 1,
+    "max_test_authors": 2,
+    "schema_corrections_per_worker": 1
+  },
+  "authority": {
+    "human_run_authorization": true,
+    "production_writes": false,
+    "git_mutations": false,
+    "real_backend_execution": false
+  }
+}

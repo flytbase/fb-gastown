@@ -16,8 +16,9 @@ var townCycleSession string
 func getTownLevelSessions() []string {
 	mayorSession := getMayorSessionName()
 	clerkSession := session.ClerkSessionName()
+	assayerSession := session.AssayerSessionName()
 	deaconSession := getDeaconSessionName()
-	return []string{mayorSession, clerkSession, deaconSession}
+	return []string{mayorSession, clerkSession, assayerSession, deaconSession}
 }
 
 // isTownLevelSession checks if the given session name is a town-level session.
@@ -28,8 +29,9 @@ func isTownLevelSession(sessionName string) bool {
 	// Town-level sessions are identified by their fixed names
 	mayorSession := getMayorSessionName()      // "hq-mayor"
 	clerkSession := session.ClerkSessionName() // "hq-clerk"
-	deaconSession := getDeaconSessionName()    // "hq-deacon"
-	return sessionName == mayorSession || sessionName == clerkSession || sessionName == deaconSession
+	assayerSession := session.AssayerSessionName()
+	deaconSession := getDeaconSessionName() // "hq-deacon"
+	return sessionName == mayorSession || sessionName == clerkSession || sessionName == assayerSession || sessionName == deaconSession
 }
 
 func init() {
@@ -49,9 +51,9 @@ var townCmd = &cobra.Command{
 
 var townNextCmd = &cobra.Command{
 	Use:   "next",
-	Short: "Switch to next town session (mayor/clerk/deacon)",
+	Short: "Switch to next town session (mayor/clerk/assayer/deacon)",
 	Long: `Switch to the next town-level session in the cycle order.
-Town sessions cycle between Mayor, Clerk, and Deacon.
+Town sessions cycle between Mayor, Clerk, Assayer, and Deacon.
 
 This command is typically invoked via the C-b n keybinding when in a
 town-level session (Mayor or Deacon).`,
@@ -62,9 +64,9 @@ town-level session (Mayor or Deacon).`,
 
 var townPrevCmd = &cobra.Command{
 	Use:   "prev",
-	Short: "Switch to previous town session (mayor/clerk/deacon)",
+	Short: "Switch to previous town session (mayor/clerk/assayer/deacon)",
 	Long: `Switch to the previous town-level session in the cycle order.
-Town sessions cycle between Mayor, Clerk, and Deacon.
+Town sessions cycle between Mayor, Clerk, Assayer, and Deacon.
 
 This command is typically invoked via the C-b p keybinding when in a
 town-level session (Mayor or Deacon).`,

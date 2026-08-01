@@ -22,6 +22,12 @@ func ClerkSessionName() string {
 	return HQPrefix + "clerk"
 }
 
+// AssayerSessionName returns the session name for the supervised backend
+// assurance head.
+func AssayerSessionName() string {
+	return HQPrefix + "assayer"
+}
+
 // FeedSessionName returns the optional Herdr tab used by `gt feed --window`.
 func FeedSessionName() string {
 	return HQPrefix + "feed"

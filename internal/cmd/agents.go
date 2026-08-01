@@ -25,6 +25,7 @@ type AgentType int
 const (
 	AgentMayor AgentType = iota
 	AgentClerk
+	AgentAssayer
 	AgentDeacon
 	AgentWitness
 	AgentRefinery
@@ -48,6 +49,7 @@ type AgentSession struct {
 var AgentTypeColors = map[AgentType]string{
 	AgentMayor:    "#[fg=red,bold]",
 	AgentClerk:    "#[fg=green,bold]",
+	AgentAssayer:  "#[fg=magenta,bold]",
 	AgentDeacon:   "#[fg=yellow,bold]",
 	AgentWitness:  "#[fg=cyan]",
 	AgentRefinery: "#[fg=blue]",
@@ -70,6 +72,7 @@ var rigTypeOrder = map[AgentType]int{
 var AgentTypeIcons = map[AgentType]string{
 	AgentMayor:    constants.EmojiMayor,
 	AgentClerk:    constants.EmojiClerk,
+	AgentAssayer:  constants.EmojiAssayer,
 	AgentDeacon:   constants.EmojiDeacon,
 	AgentWitness:  constants.EmojiWitness,
 	AgentRefinery: constants.EmojiRefinery,
@@ -169,6 +172,8 @@ func categorizeSession(name string) *AgentSession {
 		sess.Type = AgentMayor
 	case session.RoleClerk:
 		sess.Type = AgentClerk
+	case session.RoleAssayer:
+		sess.Type = AgentAssayer
 	case session.RoleDeacon:
 		sess.Type = AgentDeacon
 	case session.RoleWitness:

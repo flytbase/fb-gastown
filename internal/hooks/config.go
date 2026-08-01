@@ -337,6 +337,25 @@ func DefaultOverrides() map[string]*HooksConfig {
 				},
 			},
 		},
+		// Assayer Phase 1 is response-only. Host-native worker spawning remains
+		// available, while repository mutation, backend execution, external
+		// network tools, and self-authorization fail closed.
+		"assayer": {
+			PreToolUse: []HookEntry{
+				{
+					Matcher: "Write|Edit|MultiEdit|NotebookEdit",
+					Hooks:   []Hook{{Type: "command", Command: "echo 'BLOCKED: Assayer Phase 1 is response-only and cannot modify files.' >&2; exit 2"}},
+				},
+				{
+					Matcher: "Read|Glob|Grep|WebFetch|WebSearch",
+					Hooks:   []Hook{{Type: "command", Command: "echo 'BLOCKED: Assayer Phase 1 receives only sealed synthetic Task Packs.' >&2; exit 2"}},
+				},
+				{
+					Matcher: "Bash",
+					Hooks:   []Hook{{Type: "command", Command: "gt assayer guard-bash"}},
+				},
+			},
+		},
 		// Witness roles: patrol-formula-guard (gt-e47hxn).
 		// Blocks patrol formulas from using persistent molecules — must use wisps.
 		// Without this, witnesses could accidentally create permanent patrol molecules
@@ -512,6 +531,11 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 		Role: "clerk",
 	})
 	targets = append(targets, Target{
+		Path: filepath.Join(townRoot, "assayer", ".claude", "settings.json"),
+		Key:  "assayer",
+		Role: "assayer",
+	})
+	targets = append(targets, Target{
 		Path: filepath.Join(townRoot, "deacon", ".claude", "settings.json"),
 		Key:  "deacon",
 		Role: "deacon",
@@ -524,7 +548,7 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() || entry.Name() == "mayor" || entry.Name() == "clerk" || entry.Name() == "deacon" ||
+		if !entry.IsDir() || entry.Name() == "mayor" || entry.Name() == "clerk" || entry.Name() == "assayer" || entry.Name() == "deacon" ||
 			entry.Name() == ".beads" || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
@@ -604,7 +628,7 @@ func DiscoverRoleLocations(townRoot string) ([]RoleLocation, error) {
 	var locations []RoleLocation
 
 	// Town-level roles
-	for _, role := range []string{"mayor", "clerk", "deacon"} {
+	for _, role := range []string{"mayor", "clerk", "assayer", "deacon"} {
 		dir := filepath.Join(townRoot, role)
 		if info, err := os.Stat(dir); err == nil && info.IsDir() {
 			locations = append(locations, RoleLocation{Dir: dir, Role: role})
@@ -618,7 +642,7 @@ func DiscoverRoleLocations(townRoot string) ([]RoleLocation, error) {
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() || entry.Name() == "mayor" || entry.Name() == "clerk" || entry.Name() == "deacon" ||
+		if !entry.IsDir() || entry.Name() == "mayor" || entry.Name() == "clerk" || entry.Name() == "assayer" || entry.Name() == "deacon" ||
 			entry.Name() == ".beads" || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
@@ -911,7 +935,7 @@ func NormalizeTarget(target string) (string, bool) {
 
 	validRoles := map[string]bool{
 		"crew": true, "witness": true, "refinery": true,
-		"polecats": true, "mayor": true, "clerk": true, "deacon": true,
+		"polecats": true, "mayor": true, "clerk": true, "assayer": true, "deacon": true,
 	}
 
 	// Simple role target

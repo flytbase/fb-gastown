@@ -614,6 +614,23 @@ func TestComputeExpectedNoBase(t *testing.T) {
 		t.Error("expected clerk to inherit SessionStart from DefaultBase")
 	}
 
+	assayer, err := ComputeExpected("assayer")
+	if err != nil {
+		t.Fatalf("ComputeExpected(assayer) failed: %v", err)
+	}
+	assayerHooks := ""
+	for _, entry := range assayer.PreToolUse {
+		assayerHooks += entry.Matcher + " "
+		for _, hook := range entry.Hooks {
+			assayerHooks += hook.Command + " "
+		}
+	}
+	for _, expected := range []string{"Write|Edit", "Read|Glob|Grep", "Bash", "gt assayer guard-bash", "Phase 1"} {
+		if !strings.Contains(assayerHooks, expected) {
+			t.Errorf("assayer hooks missing %q: %s", expected, assayerHooks)
+		}
+	}
+
 	// Witness should get DefaultBase + built-in patrol-formula-guard (gt-e47hxn)
 	witness, err := ComputeExpected("witness")
 	if err != nil {

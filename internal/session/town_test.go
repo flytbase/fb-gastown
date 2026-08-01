@@ -7,12 +7,12 @@ import (
 func TestTownSessions(t *testing.T) {
 	sessions := TownSessions()
 
-	if len(sessions) != 5 {
-		t.Errorf("TownSessions() returned %d sessions, want 5", len(sessions))
+	if len(sessions) != 6 {
+		t.Errorf("TownSessions() returned %d sessions, want 6", len(sessions))
 	}
 
-	// Verify order is correct (Feed, Clerk, Mayor, Boot, Deacon)
-	expectedOrder := []string{"Feed", "Clerk", "Mayor", "Boot", "Deacon"}
+	// Verify order is correct (Feed, Clerk, Assayer, Mayor, Boot, Deacon)
+	expectedOrder := []string{"Feed", "Clerk", "Assayer", "Mayor", "Boot", "Deacon"}
 	for i, s := range sessions {
 		if s.Name != expectedOrder[i] {
 			t.Errorf("TownSessions()[%d].Name = %q, want %q", i, s.Name, expectedOrder[i])
@@ -77,7 +77,7 @@ func TestTownSession_CanBeCreated(t *testing.T) {
 }
 
 func TestTownSession_ShutdownOrder(t *testing.T) {
-	// Verify that shutdown order is Feed -> Clerk -> Mayor -> Boot -> Deacon
+	// Verify that shutdown order is Feed -> Clerk -> Assayer -> Mayor -> Boot -> Deacon
 	// This is critical because Boot monitors Deacon
 	sessions := TownSessions()
 
@@ -87,13 +87,16 @@ func TestTownSession_ShutdownOrder(t *testing.T) {
 	if sessions[1].Name != "Clerk" {
 		t.Errorf("Second session should be Clerk, got %q", sessions[1].Name)
 	}
-	if sessions[2].Name != "Mayor" {
-		t.Errorf("Third session should be Mayor, got %q", sessions[2].Name)
+	if sessions[2].Name != "Assayer" {
+		t.Errorf("Third session should be Assayer, got %q", sessions[2].Name)
 	}
-	if sessions[3].Name != "Boot" {
-		t.Errorf("Fourth session should be Boot, got %q", sessions[3].Name)
+	if sessions[3].Name != "Mayor" {
+		t.Errorf("Fourth session should be Mayor, got %q", sessions[3].Name)
 	}
-	if sessions[4].Name != "Deacon" {
-		t.Errorf("Fifth session should be Deacon, got %q", sessions[4].Name)
+	if sessions[4].Name != "Boot" {
+		t.Errorf("Fifth session should be Boot, got %q", sessions[4].Name)
+	}
+	if sessions[5].Name != "Deacon" {
+		t.Errorf("Sixth session should be Deacon, got %q", sessions[5].Name)
 	}
 }
