@@ -21,6 +21,13 @@
     "max_test_authors": 2,
     "schema_corrections_per_worker": 1
   },
+  "automation": {
+    "post_worker": {
+      "enabled": true,
+      "mode": "harden",
+      "require_merge_request": true
+    }
+  },
   "authority": {
     "human_run_authorization": true,
     "mayor_run_authorization": true,

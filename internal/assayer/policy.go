@@ -35,17 +35,31 @@ type Limits struct {
 	SchemaCorrections    int `json:"schema_corrections_per_worker"`
 }
 
+// PostWorkerAutomation configures the native advisory handoff that runs after
+// a Polecat submits completed work and before Refinery is nudged.
+type PostWorkerAutomation struct {
+	Enabled             bool   `json:"enabled"`
+	Mode                string `json:"mode"`
+	RequireMergeRequest bool   `json:"require_merge_request"`
+}
+
+// Automation contains native lifecycle integrations owned by Gas Town.
+type Automation struct {
+	PostWorker PostWorkerAutomation `json:"post_worker"`
+}
+
 // Policy contains per-Town choices. Product truth, Oracle content, secrets,
 // and FlytBase-specific absolute paths are never compiled into Gas Town.
 type Policy struct {
-	Version          int      `json:"version"`
-	Enabled          bool     `json:"enabled"`
-	Phase            string   `json:"phase"`
-	Domain           string   `json:"domain"`
-	ContextRoots     []string `json:"context_roots"`
-	Modes            []string `json:"modes"`
-	AuthorizationTTL string   `json:"authorization_ttl"`
-	Limits           Limits   `json:"limits"`
+	Version          int        `json:"version"`
+	Enabled          bool       `json:"enabled"`
+	Phase            string     `json:"phase"`
+	Domain           string     `json:"domain"`
+	ContextRoots     []string   `json:"context_roots"`
+	Modes            []string   `json:"modes"`
+	AuthorizationTTL string     `json:"authorization_ttl"`
+	Limits           Limits     `json:"limits"`
+	Automation       Automation `json:"automation"`
 	Authority        struct {
 		HumanRunAuthorization bool `json:"human_run_authorization"`
 		MayorRunAuthorization bool `json:"mayor_run_authorization"`
@@ -104,6 +118,14 @@ func (p *Policy) Validate() error {
 	if len(p.Modes) == 0 {
 		return fmt.Errorf("Assayer requires at least one operating mode")
 	}
+	if p.Automation.PostWorker.Enabled {
+		if !p.Authority.MayorRunAuthorization {
+			return fmt.Errorf("Assayer post-worker automation requires Mayor run authorization")
+		}
+		if !contains(p.Modes, p.Automation.PostWorker.Mode) {
+			return fmt.Errorf("unsupported Assayer post-worker mode %q", p.Automation.PostWorker.Mode)
+		}
+	}
 	allowedModes := make(map[string]struct{}, len(ceiling.Modes))
 	for _, mode := range ceiling.Modes {
 		allowedModes[mode] = struct{}{}
@@ -147,13 +169,17 @@ func LoadPolicy(townRoot string) (*Policy, error) {
 	// key. Preserve explicit false while enabling the new native default for
 	// legacy Towns without rewriting their policy file.
 	var raw struct {
-		Authority map[string]json.RawMessage `json:"authority"`
+		Authority  map[string]json.RawMessage `json:"authority"`
+		Automation map[string]json.RawMessage `json:"automation"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("decoding Assayer policy authority: %w", err)
 	}
 	if _, present := raw.Authority["mayor_run_authorization"]; !present {
 		policy.Authority.MayorRunAuthorization = true
+	}
+	if _, present := raw.Automation["post_worker"]; !present {
+		policy.Automation.PostWorker = DefaultPolicy().Automation.PostWorker
 	}
 	if err := policy.Validate(); err != nil {
 		return nil, fmt.Errorf("validating Assayer policy: %w", err)

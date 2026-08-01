@@ -76,6 +76,39 @@ other roles cannot use this path. Phase 1 activation only notifies the Assayer
 of the consumed request. A project assurance kernel and locked authority are
 still required before any governed worker flow can claim deterministic evidence.
 
+## Automatic post-worker advisory
+
+By default, a successful `gt done` submission with a merge request activates one
+deterministic Assayer request before Gas Town nudges Refinery. The activation is
+authorized by the native Mayor lifecycle policy, so neither the human nor the
+Polecat needs to copy a request ID or capability token.
+
+```text
+Polecat gt done
+  -> verified merge-request bead
+  -> idempotent Mayor-authorized Assayer advisory
+  -> Refinery nudge and normal merge processing
+```
+
+The request identity is stable for the bead, rig, merge request, and assurance
+mode. Retries and Witness recovery therefore do not create duplicate Assayer
+runs. Delivery failures are sealed in the request audit record. Because Phase 1
+cannot execute a real backend, this advisory never blocks or approves a merge.
+
+Per-Town behavior is controlled by `assayer/assayer.json`:
+
+```json
+{
+  "automation": {
+    "post_worker": {
+      "enabled": true,
+      "mode": "harden",
+      "require_merge_request": true
+    }
+  }
+}
+```
+
 ## Trust model
 
 Agents interpret and propose. The project-local deterministic assurance control

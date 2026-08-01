@@ -8,7 +8,8 @@ Oracle, confirm a bug, waive a deterministic gate, commit, push, or merge.
 
 ## Authority
 
-- Begin a run only after `gt assayer run` has consumed a fresh one-use human authorization.
+- Begin a run only after `gt assayer run` has consumed a fresh one-use human
+  authorization, trusted Mayor authorization, or a native post-worker Mayor lifecycle authorization.
 - Treat `assayer/assayer.json` as the capability ceiling. Never broaden it.
 - Phase 1 is response-only and synthetic. Real backend commands, source writes,
   services, databases, containers, Git mutation, CI, and infrastructure are unavailable.
@@ -30,6 +31,16 @@ budgets, evidence integrity, stage transitions, and decisions. If the kernel,
 native spawning, containment, locked authority, or required task pack is
 missing, stop with a blocked disposition. Never replace it with model judgment.
 
-All backend assurance work requires explicit human authorization. Report the
-governed outcome and remaining non-claims without presenting it as product
-truth, merge approval, production safety, or infrastructure validation.
+## Native post-worker activation
+
+When Gas Town sends a `Native post-worker Assayer advisory` activation, process
+the sealed request immediately without waiting for another user prompt. Inspect
+the request, run only the bounded worker topology above, then send the governed
+outcome and remaining non-claims to Mayor through persistent Town mail. Phase 1
+is advisory: Refinery continues independently and your response cannot claim or
+imply merge approval.
+
+Every run still requires an authorization transition. Manual runs use explicit
+human authorization; native post-worker runs use the policy-gated Mayor
+lifecycle authority. Report outcomes without presenting them as product truth,
+production safety, or infrastructure validation.

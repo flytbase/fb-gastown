@@ -92,6 +92,7 @@ var assayerStatusCmd = &cobra.Command{
 		fmt.Printf("Assayer: %s\n", map[bool]string{true: "running", false: "stopped"}[running])
 		fmt.Printf("Phase: %s (real backend execution: %t)\n", policy.Phase, policy.Authority.RealBackendExecution)
 		fmt.Printf("Run authorization: human capability=%t, mayor=%t\n", policy.Authority.HumanRunAuthorization, policy.Authority.MayorRunAuthorization)
+		fmt.Printf("Post-worker automation: enabled=%t, mode=%s, advisory=%t\n", policy.Automation.PostWorker.Enabled, policy.Automation.PostWorker.Mode, !policy.Authority.RealBackendExecution)
 		fmt.Printf("Context roots: %d\n", len(policy.ContextRoots))
 		return nil
 	},

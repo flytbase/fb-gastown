@@ -20,11 +20,18 @@ import (
 
 type RequestState string
 
+type RequestOrigin string
+
 const (
 	StateRequested      RequestState = "requested"
 	StateAuthorized     RequestState = "authorized"
 	StateConsumed       RequestState = "consumed"
 	StateDeliveryFailed RequestState = "delivery_failed"
+)
+
+const (
+	OriginManual     RequestOrigin = "manual"
+	OriginPostWorker RequestOrigin = "post_worker"
 )
 
 var (
@@ -35,18 +42,22 @@ var (
 
 // Request binds one Phase 1 run to a task, rig, and explicit operating mode.
 type Request struct {
-	ID            string       `json:"id"`
-	BeadID        string       `json:"bead_id"`
-	RigName       string       `json:"rig_name"`
-	Mode          string       `json:"mode"`
-	State         RequestState `json:"state"`
-	TokenHash     string       `json:"token_hash,omitempty"`
-	RequestedAt   time.Time    `json:"requested_at"`
-	AuthorizedAt  *time.Time   `json:"authorized_at,omitempty"`
-	AuthorizedBy  string       `json:"authorized_by,omitempty"`
-	ExpiresAt     *time.Time   `json:"expires_at,omitempty"`
-	ConsumedAt    *time.Time   `json:"consumed_at,omitempty"`
-	DeliveryError string       `json:"delivery_error,omitempty"`
+	ID            string        `json:"id"`
+	BeadID        string        `json:"bead_id"`
+	RigName       string        `json:"rig_name"`
+	Mode          string        `json:"mode"`
+	Origin        RequestOrigin `json:"origin,omitempty"`
+	PolecatName   string        `json:"polecat_name,omitempty"`
+	Branch        string        `json:"branch,omitempty"`
+	MRID          string        `json:"mr_id,omitempty"`
+	State         RequestState  `json:"state"`
+	TokenHash     string        `json:"token_hash,omitempty"`
+	RequestedAt   time.Time     `json:"requested_at"`
+	AuthorizedAt  *time.Time    `json:"authorized_at,omitempty"`
+	AuthorizedBy  string        `json:"authorized_by,omitempty"`
+	ExpiresAt     *time.Time    `json:"expires_at,omitempty"`
+	ConsumedAt    *time.Time    `json:"consumed_at,omitempty"`
+	DeliveryError string        `json:"delivery_error,omitempty"`
 }
 
 // Authorizer owns one-use human capabilities for Assayer runs.
@@ -94,12 +105,47 @@ func (a *Authorizer) Create(beadID, rigName, mode string) (*Request, error) {
 	if err != nil {
 		return nil, err
 	}
-	request := &Request{ID: id, BeadID: beadID, RigName: rigName, Mode: mode, State: StateRequested, RequestedAt: a.now().UTC()}
+	request := &Request{ID: id, BeadID: beadID, RigName: rigName, Mode: mode, Origin: OriginManual, State: StateRequested, RequestedAt: a.now().UTC()}
 	path, _ := a.requestPath(id)
 	if err := atomicfile.WriteJSONWithPerm(path, request, 0o600); err != nil {
 		return nil, err
 	}
 	return request, nil
+}
+
+func (a *Authorizer) createPostWorker(completion PostWorkerCompletion, mode string) (*Request, bool, error) {
+	if err := a.ensureDir(); err != nil {
+		return nil, false, err
+	}
+	identity := strings.Join([]string{string(OriginPostWorker), completion.BeadID, completion.RigName, completion.MRID, mode}, "\x00")
+	hash := sha256.Sum256([]byte(identity))
+	id := hex.EncodeToString(hash[:16])
+	path, err := a.requestPath(id)
+	if err != nil {
+		return nil, false, err
+	}
+	unlock, err := lock.FlockAcquire(path + ".lock")
+	if err != nil {
+		return nil, false, err
+	}
+	defer unlock()
+	if existing, getErr := a.Get(id); getErr == nil {
+		if existing.Origin != OriginPostWorker || existing.BeadID != completion.BeadID || existing.RigName != completion.RigName || existing.MRID != completion.MRID || existing.Mode != mode {
+			return nil, false, fmt.Errorf("Assayer post-worker request identity collision for %s", id)
+		}
+		return existing, false, nil
+	} else if !os.IsNotExist(getErr) {
+		return nil, false, getErr
+	}
+	request := &Request{
+		ID: id, BeadID: completion.BeadID, RigName: completion.RigName, Mode: mode,
+		Origin: OriginPostWorker, PolecatName: completion.PolecatName, Branch: completion.Branch, MRID: completion.MRID,
+		State: StateRequested, RequestedAt: a.now().UTC(),
+	}
+	if err := atomicfile.WriteJSONWithPerm(path, request, 0o600); err != nil {
+		return nil, false, err
+	}
+	return request, true, nil
 }
 
 // Authorize grants a short-lived capability from a neutral human shell.
@@ -148,6 +194,36 @@ func (a *Authorizer) ConsumeMayor(id string) (*Request, error) {
 	if err := RequireMayorSession(); err != nil {
 		return nil, err
 	}
+	policy, err := LoadPolicy(a.townRoot)
+	if err != nil {
+		return nil, err
+	}
+	if !policy.Authority.MayorRunAuthorization {
+		return nil, fmt.Errorf("%w: Mayor run authorization is disabled by Assayer policy", ErrUnauthorized)
+	}
+	var result *Request
+	err = a.update(id, func(request *Request) error {
+		if request.State != StateRequested {
+			return fmt.Errorf("%w: request state is %s", ErrConsumed, request.State)
+		}
+		now := a.now().UTC()
+		request.TokenHash = ""
+		request.AuthorizedBy = constants.RoleMayor
+		request.AuthorizedAt = &now
+		request.ExpiresAt = nil
+		request.ConsumedAt = &now
+		request.State = StateConsumed
+		copy := *request
+		result = &copy
+		return nil
+	})
+	return result, err
+}
+
+// consumeLifecycleMayor is reserved for native lifecycle integrations. It
+// applies the same policy gate and audit identity as Mayor without trusting an
+// agent-controlled environment variable.
+func (a *Authorizer) consumeLifecycleMayor(id string) (*Request, error) {
 	policy, err := LoadPolicy(a.townRoot)
 	if err != nil {
 		return nil, err

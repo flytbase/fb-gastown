@@ -28,6 +28,9 @@ func TestEnsureHomeCreatesBoundedPhaseOnePolicyAndNativeWorkers(t *testing.T) {
 	if policy.Limits.MaxConcurrentWorkers != 3 || policy.Limits.MaxWorkerSpawns != 6 || policy.Limits.DelegationDepth != 1 {
 		t.Fatalf("unexpected limits: %#v", policy.Limits)
 	}
+	if !policy.Automation.PostWorker.Enabled || policy.Automation.PostWorker.Mode != "harden" || !policy.Automation.PostWorker.RequireMergeRequest {
+		t.Fatalf("unexpected post-worker automation: %#v", policy.Automation.PostWorker)
+	}
 
 	for _, worker := range Workers() {
 		for _, path := range []string{
@@ -114,6 +117,55 @@ func TestLoadPolicyEnablesMayorTrustForLegacyPolicy(t *testing.T) {
 	}
 	if !policy.Authority.MayorRunAuthorization {
 		t.Fatal("legacy policy did not inherit native Mayor authorization")
+	}
+}
+
+func TestLoadPolicyEnablesAdvisoryPostWorkerDispatchForLegacyPolicy(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := EnsureHome(townRoot, ""); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(townRoot, "assayer", "assayer.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := strings.Replace(string(data), "  \"automation\": {\n    \"post_worker\": {\n      \"enabled\": true,\n      \"mode\": \"harden\",\n      \"require_merge_request\": true\n    }\n  },\n", "", 1)
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	policy, err := LoadPolicy(townRoot)
+	if err != nil {
+		t.Fatalf("LoadPolicy() error = %v", err)
+	}
+	if !policy.Automation.PostWorker.Enabled || policy.Automation.PostWorker.Mode != "harden" || !policy.Automation.PostWorker.RequireMergeRequest {
+		t.Fatalf("legacy policy did not inherit advisory post-worker automation: %#v", policy.Automation.PostWorker)
+	}
+}
+
+func TestLegacyPolicyWithExplicitMayorDenialKeepsPostWorkerAutomationDisabled(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := EnsureHome(townRoot, ""); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(townRoot, "assayer", "assayer.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := strings.Replace(string(data), "    \"mayor_run_authorization\": true", "    \"mayor_run_authorization\": false", 1)
+	legacy = strings.Replace(legacy, "  \"automation\": {\n    \"post_worker\": {\n      \"enabled\": true,\n      \"mode\": \"harden\",\n      \"require_merge_request\": true\n    }\n  },\n", "", 1)
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	policy, err := LoadPolicy(townRoot)
+	if err != nil {
+		t.Fatalf("LoadPolicy() error = %v", err)
+	}
+	if policy.Authority.MayorRunAuthorization || policy.Automation.PostWorker.Enabled {
+		t.Fatalf("explicit Mayor denial was broadened: authority=%t automation=%#v", policy.Authority.MayorRunAuthorization, policy.Automation.PostWorker)
 	}
 }
 

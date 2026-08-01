@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/assayer"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/events"
@@ -1297,6 +1298,26 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 	}
 
 notifyWitness:
+	// Native post-worker assurance runs after the Polecat has submitted its MR
+	// and before Refinery is awakened. Phase 1 is advisory and response-only, so
+	// activation failures are visible but never strand an otherwise valid MR.
+	if mrID != "" && exitType == ExitCompleted {
+		result, dispatchErr := assayer.DispatchPostWorker(townRoot, assayer.PostWorkerCompletion{
+			BeadID:      issueID,
+			RigName:     rigName,
+			PolecatName: polecatName,
+			Branch:      branch,
+			MRID:        mrID,
+		})
+		if dispatchErr != nil {
+			style.PrintWarning("Assayer advisory activation failed: %v (Refinery will continue)", dispatchErr)
+		} else if result.Activated {
+			fmt.Printf("%s Assayer advisory activated (request %s)\n", style.Bold.Render("✓"), result.RequestID)
+		} else if result.Reason != "" && result.Reason != "already activated" {
+			fmt.Printf("%s Assayer advisory skipped: %s\n", style.Dim.Render("○"), result.Reason)
+		}
+	}
+
 	// Nudge refinery — MR bead is already on main (transaction-based shared main).
 	if mrID != "" {
 		nudgeRefinery(rigName, "MERGE_READY received - check inbox for pending work")

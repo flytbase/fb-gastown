@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/assayer"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/channelevents"
 	"github.com/steveyegge/gastown/internal/config"
@@ -273,12 +274,36 @@ func handlePolecatDonePendingMR(bd *BdCli, workDir, rigName string, payload *Pol
 		return result
 	}
 
+	activatePostWorkerAssayer(workDir, rigName, payload)
 	notifyRefineryMergeReady(workDir, rigName, result)
 
 	result.Handled = true
 	result.WispCreated = wispID
 	result.Action = fmt.Sprintf("deferred cleanup for %s (pending MR=%s, nudged refinery)", payload.PolecatName, payload.MRID)
 	return result
+}
+
+// activatePostWorkerAssayer is the Witness recovery path for the native
+// post-worker advisory. The primary gt done path dispatches first; deterministic
+// request identity makes this safe when Witness observes the same completion.
+func activatePostWorkerAssayer(workDir, rigName string, payload *PolecatDonePayload) {
+	townRoot, err := workspace.Find(workDir)
+	if err != nil || townRoot == "" {
+		return
+	}
+	if _, err := os.Stat(filepath.Join(townRoot, "assayer", "assayer.json")); err != nil {
+		return
+	}
+	_, err = assayer.DispatchPostWorker(townRoot, assayer.PostWorkerCompletion{
+		BeadID:      payload.IssueID,
+		RigName:     rigName,
+		PolecatName: payload.PolecatName,
+		Branch:      payload.Branch,
+		MRID:        payload.MRID,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "witness: Assayer advisory activation failed for MR %s: %v (Refinery will continue)\n", payload.MRID, err)
+	}
 }
 
 // notifyRefineryMergeReady emits a MERGE_READY channel event and nudges the
@@ -1764,7 +1789,7 @@ type CompletionDiscovery struct {
 	MRID           string
 	Branch         string
 	MRFailed       bool
-	PushFailed     bool   // True when branch push to origin failed (gas-556)
+	PushFailed     bool // True when branch push to origin failed (gas-556)
 	CompletionTime string
 	Action         string // What was done: "merge-ready-sent", "acknowledged-idle", "phase-complete"
 	WispCreated    string // ID of cleanup wisp if created
@@ -1916,6 +1941,8 @@ func processDiscoveredCompletion(bd *BdCli, workDir, rigName string, payload *Po
 			discovery.Error = fmt.Errorf("updating wisp state: %w", err)
 		}
 
+		activatePostWorkerAssayer(workDir, rigName, payload)
+
 		// Nudge refinery to check merge queue (no permanent mail needed).
 		townRoot, _ := workspace.Find(workDir)
 		if nudgeErr := nudgeRefinery(townRoot, rigName); nudgeErr != nil {
@@ -1942,12 +1969,12 @@ func processDiscoveredCompletion(bd *BdCli, workDir, rigName string, payload *Po
 // Used to avoid redundant subprocess invocations during zombie detection, where the same
 // agent bead was previously queried 3-5 times per polecat per patrol cycle. (gt-2gra)
 type agentBeadSnapshot struct {
-	AgentState  string
-	HookBead    string
-	Labels      []string
-	UpdatedAt   string
-	ActiveMR    string
-	Fields      *beads.AgentFields // parsed from description
+	AgentState string
+	HookBead   string
+	Labels     []string
+	UpdatedAt  string
+	ActiveMR   string
+	Fields     *beads.AgentFields // parsed from description
 }
 
 // fetchAgentBeadSnapshot fetches all agent bead data in a single bd show call.
@@ -2130,13 +2157,13 @@ func getBeadStatus(bd *BdCli, workDir, beadID string) (string, bool) {
 
 // resetAbandonedBead resets a dead polecat's hooked bead so it can be re-dispatched.
 // If the bead is in "hooked" or "in_progress" status, it:
-// 0. Checks if the polecat's work is already on main — if so, closes
-//    the bead instead of resetting (prevents re-dispatch of completed work)
-// 1. Records the respawn in the witness spawn-count ledger
-// 2. Resets status to open
-// 3. Clears assignee
-// 4. Sends mail to deacon for re-dispatch (includes respawn count; SPAWN_STORM
-//    prefix and Urgent priority when count exceeds max bead respawns config)
+//  0. Checks if the polecat's work is already on main — if so, closes
+//     the bead instead of resetting (prevents re-dispatch of completed work)
+//  1. Records the respawn in the witness spawn-count ledger
+//  2. Resets status to open
+//  3. Clears assignee
+//  4. Sends mail to deacon for re-dispatch (includes respawn count; SPAWN_STORM
+//     prefix and Urgent priority when count exceeds max bead respawns config)
 //
 // Returns true if the bead was recovered.
 func resetAbandonedBead(bd *BdCli, workDir, rigName, hookBead, polecatName string, router *mail.Router) bool {
