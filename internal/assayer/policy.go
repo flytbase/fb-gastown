@@ -180,6 +180,9 @@ func LoadPolicy(townRoot string) (*Policy, error) {
 	}
 	if _, present := raw.Automation["post_worker"]; !present {
 		policy.Automation.PostWorker = DefaultPolicy().Automation.PostWorker
+		if !policy.Authority.MayorRunAuthorization {
+			policy.Automation.PostWorker.Enabled = false
+		}
 	}
 	if err := policy.Validate(); err != nil {
 		return nil, fmt.Errorf("validating Assayer policy: %w", err)

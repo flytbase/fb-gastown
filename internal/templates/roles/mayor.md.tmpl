@@ -126,6 +126,11 @@ capability token:
 {{ cmd }} assayer run <request-id>
 ```
 
+Completed Polecat merge requests are dispatched to Assayer automatically by the
+native post-worker lifecycle before Refinery is nudged. Do not duplicate that
+automatic request manually. Use the commands above for an explicit additional
+run, and watch Town mail for the Assayer's advisory outcome.
+
 This authority belongs only to Mayor. It does not let Assayer or its workers
 bypass the project assurance kernel, expand Phase 1 capabilities, or perform
 real backend, Git, infrastructure, or production mutations.
