@@ -367,6 +367,12 @@ func filterAndSortSessions(sessionNames []string, includePolecats bool) []*Agent
 		if b.Type == AgentClerk {
 			return false
 		}
+		if a.Type == AgentAssayer {
+			return true
+		}
+		if b.Type == AgentAssayer {
+			return false
+		}
 		if a.Type == AgentDeacon {
 			return true
 		}
@@ -412,6 +418,8 @@ func (a *AgentSession) displayLabel() string {
 		return fmt.Sprintf("%s%s Mayor#[default]", color, icon)
 	case AgentClerk:
 		return fmt.Sprintf("%s%s Clerk#[default]", color, icon)
+	case AgentAssayer:
+		return fmt.Sprintf("%s%s Assayer#[default]", color, icon)
 	case AgentDeacon:
 		return fmt.Sprintf("%s%s Deacon#[default]", color, icon)
 	case AgentWitness:
@@ -634,6 +642,8 @@ func runAgentsList(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  %s Mayor\n", icon)
 		case AgentClerk:
 			fmt.Printf("  %s Clerk\n", icon)
+		case AgentAssayer:
+			fmt.Printf("  %s Assayer\n", icon)
 		case AgentDeacon:
 			fmt.Printf("  %s Deacon\n", icon)
 		case AgentWitness:

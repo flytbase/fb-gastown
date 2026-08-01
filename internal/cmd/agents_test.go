@@ -85,6 +85,7 @@ func TestCategorizeSession_AllTypes(t *testing.T) {
 	}{
 		{"mayor", "hq-mayor", AgentMayor},
 		{"clerk", "hq-clerk", AgentClerk},
+		{"assayer", "hq-assayer", AgentAssayer},
 		{"deacon", "hq-deacon", AgentDeacon},
 		// Rig-level sessions require a registered prefix. Use "gt" which is
 		// commonly registered in the default PrefixRegistry.
@@ -181,6 +182,7 @@ func TestDisplayLabel_AllTypes(t *testing.T) {
 	}{
 		{"mayor", AgentSession{Name: "hq-mayor", Type: AgentMayor}, "Mayor"},
 		{"clerk", AgentSession{Name: "hq-clerk", Type: AgentClerk}, "Clerk"},
+		{"assayer", AgentSession{Name: "hq-assayer", Type: AgentAssayer}, "Assayer"},
 		{"deacon", AgentSession{Name: "hq-deacon", Type: AgentDeacon}, "Deacon"},
 		{"witness", AgentSession{Name: "gt-witness", Type: AgentWitness, Rig: "gastown"}, "gastown/witness"},
 		{"refinery", AgentSession{Name: "gt-refinery", Type: AgentRefinery, Rig: "gastown"}, "gastown/refinery"},
@@ -291,6 +293,7 @@ func TestFilterAndSortSessions_SortOrder(t *testing.T) {
 		"gt-witness",    // witness (gastown)
 		"hq-deacon",     // deacon
 		"hq-clerk",      // clerk
+		"hq-assayer",    // assayer
 		"gt-refinery",   // refinery (gastown)
 		"hq-mayor",      // mayor
 		"gt-furiosa",    // polecat (gastown)
@@ -303,19 +306,21 @@ func TestFilterAndSortSessions_SortOrder(t *testing.T) {
 	// Expected order:
 	// 1. mayor (town-level)
 	// 2. clerk (town-level)
-	// 3. deacon (town-level)
-	// 4. gastown/refinery (rig "gastown" < "myrig", refinery before witness)
-	// 5. gastown/witness
-	// 6. gastown/crew/alpha (crew after witness, alpha < zed)
-	// 7. gastown/crew/zed
-	// 8. gastown/polecat/furiosa (polecat last within rig)
-	// 9. myrig/witness
+	// 3. assayer (town-level)
+	// 4. deacon (town-level)
+	// 5. gastown/refinery (rig "gastown" < "myrig", refinery before witness)
+	// 6. gastown/witness
+	// 7. gastown/crew/alpha (crew after witness, alpha < zed)
+	// 8. gastown/crew/zed
+	// 9. gastown/polecat/furiosa (polecat last within rig)
+	// 10. myrig/witness
 	wantOrder := []struct {
 		wantType AgentType
 		wantName string
 	}{
 		{AgentMayor, "hq-mayor"},
 		{AgentClerk, "hq-clerk"},
+		{AgentAssayer, "hq-assayer"},
 		{AgentDeacon, "hq-deacon"},
 		{AgentRefinery, "gt-refinery"},
 		{AgentWitness, "gt-witness"},
