@@ -23,9 +23,10 @@
   },
   "automation": {
     "post_worker": {
-      "enabled": true,
+      "enabled": false,
       "mode": "harden",
-      "require_merge_request": true
+      "require_merge_request": true,
+      "eligible_rigs": []
     }
   },
   "authority": {

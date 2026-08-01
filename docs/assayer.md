@@ -78,10 +78,17 @@ still required before any governed worker flow can claim deterministic evidence.
 
 ## Automatic post-worker advisory
 
-By default, a successful `gt done` submission with a merge request activates one
-deterministic Assayer request before Gas Town nudges Refinery. The activation is
-authorized by the native Mayor lifecycle policy, so neither the human nor the
-Polecat needs to copy a request ID or capability token.
+When enabled for an explicit backend rig, a successful `gt done` submission with
+a merge request creates one deterministic Assayer request before Gas Town nudges
+Refinery. The activation is authorized by the native Mayor lifecycle policy, so
+neither the human nor the Polecat needs to copy a request ID or capability token.
+
+Automation is fail-closed for new and legacy Towns. Enable only the rigs that own
+backend work:
+
+```bash
+gt assayer automation enable cloud_monorepo_v2
+```
 
 ```text
 Polecat gt done
@@ -92,8 +99,15 @@ Polecat gt done
 
 The request identity is stable for the bead, rig, merge request, and assurance
 mode. Retries and Witness recovery therefore do not create duplicate Assayer
-runs. Delivery failures are sealed in the request audit record. Because Phase 1
-cannot execute a real backend, this advisory never blocks or approves a merge.
+runs. If Assayer is stopped, the Mayor-authorized request remains queued and is
+redelivered when its native session starts. Assayer must atomically claim the
+request before spawning workers, so repeated delivery cannot execute it twice.
+It then records `advisory_complete` or `blocked` as a durable response-only
+receipt. The Town daemon retries queued delivery on its recovery heartbeat. If
+the Assayer session dies after claiming but before completion, session restart
+requeues the same deterministic run; completed receipts are never replayed.
+Because Phase 1 cannot execute a real backend, this advisory never blocks or
+approves a merge.
 
 Per-Town behavior is controlled by `assayer/assayer.json`:
 
@@ -103,11 +117,15 @@ Per-Town behavior is controlled by `assayer/assayer.json`:
     "post_worker": {
       "enabled": true,
       "mode": "harden",
-      "require_merge_request": true
+      "require_merge_request": true,
+      "eligible_rigs": ["cloud_monorepo_v2"]
     }
   }
 }
 ```
+
+The embedded default is `enabled: false` with no eligible rigs. Use
+`gt assayer automation disable` to stop new automatic activations.
 
 ## Trust model
 

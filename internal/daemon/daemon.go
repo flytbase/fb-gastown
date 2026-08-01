@@ -21,6 +21,7 @@ import (
 
 	"github.com/gofrs/flock"
 	beadsdk "github.com/steveyegge/beads"
+	"github.com/steveyegge/gastown/internal/assayer"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/boot"
 	agentconfig "github.com/steveyegge/gastown/internal/config"
@@ -834,6 +835,9 @@ func (d *Daemon) heartbeat(state *State) {
 	// 6. Ensure Mayor is running (restart if dead)
 	d.ensureMayorRunning()
 
+	// 6.1. Ensure Assayer is running and retry any durable advisory delivery.
+	d.ensureAssayerRunning()
+
 	// 6.5. Handle Dog lifecycle: cleanup stuck dogs and dispatch plugins
 	// Pressure-gated: dog dispatch spawns new agent sessions.
 	if d.isPatrolActive("handler") {
@@ -900,6 +904,24 @@ func (d *Daemon) heartbeat(state *State) {
 	}
 
 	d.logger.Printf("Heartbeat complete (#%d)", state.HeartbeatCount)
+}
+
+func (d *Daemon) ensureAssayerRunning() {
+	if _, err := os.Stat(filepath.Join(d.config.TownRoot, "assayer", "assayer.json")); err != nil {
+		return
+	}
+	manager := assayer.NewManager(d.config.TownRoot)
+	if err := manager.Start(""); err != nil {
+		if !errors.Is(err, assayer.ErrAlreadyRunning) {
+			d.logger.Printf("Assayer start failed: %v", err)
+			return
+		}
+		if delivered, deliveryErr := manager.DeliverPending(); deliveryErr != nil {
+			d.logger.Printf("Assayer pending advisory retry failed: %v", deliveryErr)
+		} else if delivered > 0 {
+			d.logger.Printf("Assayer delivered %d pending advisor%s", delivered, map[bool]string{true: "y", false: "ies"}[delivered == 1])
+		}
+	}
 }
 
 // rotateOversizedLogs checks Dolt server log files and rotates any that exceed

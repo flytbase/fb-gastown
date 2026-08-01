@@ -52,7 +52,20 @@ func (m *Manager) Start(agentOverride string) error {
 		return fmt.Errorf("Assayer is disabled in assayer/assayer.json")
 	}
 	_, err = session.StartSession(t, m.sessionConfig(agentOverride))
-	return err
+	if err != nil {
+		return err
+	}
+	if _, deliveryErr := newPostWorkerDispatcher(m.townRoot, &sessionActivationSink{townRoot: m.townRoot}).DeliverPendingAfterRestart(); deliveryErr != nil {
+		fmt.Fprintf(os.Stderr, "Assayer started with pending advisory delivery errors: %v\n", deliveryErr)
+	}
+	return nil
+}
+
+// DeliverPending retries queued native advisory transport while the Assayer
+// session remains healthy. Claimed work is recovered only by Start after a
+// session restart, so active runs are never interrupted by a heartbeat.
+func (m *Manager) DeliverPending() (int, error) {
+	return newPostWorkerDispatcher(m.townRoot, &sessionActivationSink{townRoot: m.townRoot}).DeliverPending()
 }
 
 func (m *Manager) sessionConfig(agentOverride string) session.SessionConfig {

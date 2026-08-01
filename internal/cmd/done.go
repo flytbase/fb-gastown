@@ -1302,13 +1302,14 @@ notifyWitness:
 	// and before Refinery is awakened. Phase 1 is advisory and response-only, so
 	// activation failures are visible but never strand an otherwise valid MR.
 	if mrID != "" && exitType == ExitCompleted {
-		result, dispatchErr := assayer.DispatchPostWorker(townRoot, assayer.PostWorkerCompletion{
-			BeadID:      issueID,
-			RigName:     rigName,
-			PolecatName: polecatName,
-			Branch:      branch,
-			MRID:        mrID,
-		})
+		result, dispatchErr := runPostWorkerAssuranceHandoff(
+			func() (*assayer.PostWorkerDispatchResult, error) {
+				return assayer.DispatchPostWorker(townRoot, assayer.PostWorkerCompletion{
+					BeadID: issueID, RigName: rigName, PolecatName: polecatName, Branch: branch, MRID: mrID,
+				})
+			},
+			func() { nudgeRefinery(rigName, "MERGE_READY received - check inbox for pending work") },
+		)
 		if dispatchErr != nil {
 			style.PrintWarning("Assayer advisory activation failed: %v (Refinery will continue)", dispatchErr)
 		} else if result.Activated {
@@ -1316,10 +1317,8 @@ notifyWitness:
 		} else if result.Reason != "" && result.Reason != "already activated" {
 			fmt.Printf("%s Assayer advisory skipped: %s\n", style.Dim.Render("○"), result.Reason)
 		}
-	}
-
-	// Nudge refinery — MR bead is already on main (transaction-based shared main).
-	if mrID != "" {
+	} else if mrID != "" {
+		// Nudge refinery — MR bead is already on main (transaction-based shared main).
 		nudgeRefinery(rigName, "MERGE_READY received - check inbox for pending work")
 	}
 
@@ -1450,6 +1449,14 @@ notifyWitness:
 	}
 
 	return nil
+}
+
+// runPostWorkerAssuranceHandoff preserves the native completion ordering while
+// guaranteeing that advisory dispatch failures never strand the merge request.
+func runPostWorkerAssuranceHandoff(dispatch func() (*assayer.PostWorkerDispatchResult, error), notifyRefinery func()) (*assayer.PostWorkerDispatchResult, error) {
+	result, err := dispatch()
+	notifyRefinery()
+	return result, err
 }
 
 // pushSubmoduleChanges detects submodules modified between origin/defaultBranch

@@ -28,7 +28,7 @@ func TestEnsureHomeCreatesBoundedPhaseOnePolicyAndNativeWorkers(t *testing.T) {
 	if policy.Limits.MaxConcurrentWorkers != 3 || policy.Limits.MaxWorkerSpawns != 6 || policy.Limits.DelegationDepth != 1 {
 		t.Fatalf("unexpected limits: %#v", policy.Limits)
 	}
-	if !policy.Automation.PostWorker.Enabled || policy.Automation.PostWorker.Mode != "harden" || !policy.Automation.PostWorker.RequireMergeRequest {
+	if policy.Automation.PostWorker.Enabled || policy.Automation.PostWorker.Mode != "harden" || !policy.Automation.PostWorker.RequireMergeRequest || len(policy.Automation.PostWorker.EligibleRigs) != 0 {
 		t.Fatalf("unexpected post-worker automation: %#v", policy.Automation.PostWorker)
 	}
 
@@ -120,7 +120,7 @@ func TestLoadPolicyEnablesMayorTrustForLegacyPolicy(t *testing.T) {
 	}
 }
 
-func TestLoadPolicyEnablesAdvisoryPostWorkerDispatchForLegacyPolicy(t *testing.T) {
+func TestLoadPolicyKeepsAdvisoryPostWorkerDispatchDisabledForLegacyPolicy(t *testing.T) {
 	townRoot := t.TempDir()
 	if err := EnsureHome(townRoot, ""); err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestLoadPolicyEnablesAdvisoryPostWorkerDispatchForLegacyPolicy(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy := strings.Replace(string(data), "  \"automation\": {\n    \"post_worker\": {\n      \"enabled\": true,\n      \"mode\": \"harden\",\n      \"require_merge_request\": true\n    }\n  },\n", "", 1)
+	legacy := strings.Replace(string(data), "  \"automation\": {\n    \"post_worker\": {\n      \"enabled\": false,\n      \"mode\": \"harden\",\n      \"require_merge_request\": true,\n      \"eligible_rigs\": []\n    }\n  },\n", "", 1)
 	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -139,8 +139,8 @@ func TestLoadPolicyEnablesAdvisoryPostWorkerDispatchForLegacyPolicy(t *testing.T
 	if err != nil {
 		t.Fatalf("LoadPolicy() error = %v", err)
 	}
-	if !policy.Automation.PostWorker.Enabled || policy.Automation.PostWorker.Mode != "harden" || !policy.Automation.PostWorker.RequireMergeRequest {
-		t.Fatalf("legacy policy did not inherit advisory post-worker automation: %#v", policy.Automation.PostWorker)
+	if policy.Automation.PostWorker.Enabled || policy.Automation.PostWorker.Mode != "harden" || !policy.Automation.PostWorker.RequireMergeRequest {
+		t.Fatalf("legacy policy unexpectedly broadened post-worker automation: %#v", policy.Automation.PostWorker)
 	}
 }
 
@@ -155,7 +155,7 @@ func TestLegacyPolicyWithExplicitMayorDenialKeepsPostWorkerAutomationDisabled(t 
 		t.Fatal(err)
 	}
 	legacy := strings.Replace(string(data), "    \"mayor_run_authorization\": true", "    \"mayor_run_authorization\": false", 1)
-	legacy = strings.Replace(legacy, "  \"automation\": {\n    \"post_worker\": {\n      \"enabled\": true,\n      \"mode\": \"harden\",\n      \"require_merge_request\": true\n    }\n  },\n", "", 1)
+	legacy = strings.Replace(legacy, "  \"automation\": {\n    \"post_worker\": {\n      \"enabled\": false,\n      \"mode\": \"harden\",\n      \"require_merge_request\": true,\n      \"eligible_rigs\": []\n    }\n  },\n", "", 1)
 	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -181,5 +181,25 @@ func TestWorkersAreBackendOnlyAndCannotDelegate(t *testing.T) {
 		if worker.Domain != "backend-testing" {
 			t.Fatalf("worker %s domain = %q", worker.Kind, worker.Domain)
 		}
+	}
+}
+
+func TestConfigurePostWorkerAutomationRequiresExplicitRigs(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := EnsureHome(townRoot, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := ConfigurePostWorkerAutomation(townRoot, true, nil); err == nil {
+		t.Fatal("enabled post-worker automation without an explicit rig")
+	}
+	if err := ConfigurePostWorkerAutomation(townRoot, true, []string{"backend", "backend", "api"}); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := LoadPolicy(townRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !policy.Automation.PostWorker.Enabled || strings.Join(policy.Automation.PostWorker.EligibleRigs, ",") != "api,backend" {
+		t.Fatalf("unexpected configured automation: %#v", policy.Automation.PostWorker)
 	}
 }

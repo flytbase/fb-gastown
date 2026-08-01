@@ -38,9 +38,10 @@ type Limits struct {
 // PostWorkerAutomation configures the native advisory handoff that runs after
 // a Polecat submits completed work and before Refinery is nudged.
 type PostWorkerAutomation struct {
-	Enabled             bool   `json:"enabled"`
-	Mode                string `json:"mode"`
-	RequireMergeRequest bool   `json:"require_merge_request"`
+	Enabled             bool     `json:"enabled"`
+	Mode                string   `json:"mode"`
+	RequireMergeRequest bool     `json:"require_merge_request"`
+	EligibleRigs        []string `json:"eligible_rigs"`
 }
 
 // Automation contains native lifecycle integrations owned by Gas Town.
@@ -124,6 +125,20 @@ func (p *Policy) Validate() error {
 		}
 		if !contains(p.Modes, p.Automation.PostWorker.Mode) {
 			return fmt.Errorf("unsupported Assayer post-worker mode %q", p.Automation.PostWorker.Mode)
+		}
+		if len(p.Automation.PostWorker.EligibleRigs) == 0 {
+			return fmt.Errorf("Assayer post-worker automation requires at least one explicit eligible rig")
+		}
+		seenRigs := make(map[string]struct{}, len(p.Automation.PostWorker.EligibleRigs))
+		for _, rigName := range p.Automation.PostWorker.EligibleRigs {
+			rigName = strings.TrimSpace(rigName)
+			if rigName == "" || rigName == "*" {
+				return fmt.Errorf("Assayer post-worker eligible rigs must be explicit Town rig names")
+			}
+			if _, exists := seenRigs[rigName]; exists {
+				return fmt.Errorf("duplicate Assayer post-worker eligible rig %q", rigName)
+			}
+			seenRigs[rigName] = struct{}{}
 		}
 	}
 	allowedModes := make(map[string]struct{}, len(ceiling.Modes))
@@ -233,6 +248,36 @@ func AddContextRoot(townRoot, contextRoot string) error {
 	}
 	policy.ContextRoots = append(policy.ContextRoots, clean)
 	sort.Strings(policy.ContextRoots)
+	if err := policy.Validate(); err != nil {
+		return err
+	}
+	return atomicfile.WriteJSONWithPerm(filepath.Join(townRoot, "assayer", "assayer.json"), policy, 0o600)
+}
+
+// ConfigurePostWorkerAutomation explicitly scopes automatic backend assurance
+// to named Town rigs. An empty rig set is valid only when disabling it.
+func ConfigurePostWorkerAutomation(townRoot string, enabled bool, rigNames []string) error {
+	policy, err := LoadPolicy(townRoot)
+	if err != nil {
+		return err
+	}
+	if enabled {
+		unique := make(map[string]struct{}, len(rigNames))
+		policy.Automation.PostWorker.EligibleRigs = policy.Automation.PostWorker.EligibleRigs[:0]
+		for _, rigName := range rigNames {
+			rigName = strings.TrimSpace(rigName)
+			if rigName == "" {
+				continue
+			}
+			if _, exists := unique[rigName]; exists {
+				continue
+			}
+			unique[rigName] = struct{}{}
+			policy.Automation.PostWorker.EligibleRigs = append(policy.Automation.PostWorker.EligibleRigs, rigName)
+		}
+		sort.Strings(policy.Automation.PostWorker.EligibleRigs)
+	}
+	policy.Automation.PostWorker.Enabled = enabled
 	if err := policy.Validate(); err != nil {
 		return err
 	}

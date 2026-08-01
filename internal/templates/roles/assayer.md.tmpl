@@ -34,11 +34,14 @@ missing, stop with a blocked disposition. Never replace it with model judgment.
 ## Native post-worker activation
 
 When Gas Town sends a `Native post-worker Assayer advisory` activation, process
-the sealed request immediately without waiting for another user prompt. Inspect
-the request, run only the bounded worker topology above, then send the governed
-outcome and remaining non-claims to Mayor through persistent Town mail. Phase 1
-is advisory: Refinery continues independently and your response cannot claim or
-imply merge approval.
+the sealed request immediately without waiting for another user prompt. First
+run `gt assayer claim <request-id>`. Only a successful atomic claim owns the run;
+duplicate delivery notices must stop when the claim is already consumed. Inspect
+the request and run only the bounded worker topology above. Record the terminal
+receipt with `gt assayer complete <request-id> --outcome advisory_complete` or
+`--outcome blocked`, then send the governed outcome and remaining non-claims to
+Mayor through persistent Town mail. Phase 1 is advisory: Refinery continues
+independently and your response cannot claim or imply merge approval.
 
 Every run still requires an authorization transition. Manual runs use explicit
 human authorization; native post-worker runs use the policy-gated Mayor

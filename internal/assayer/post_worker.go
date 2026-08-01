@@ -23,6 +23,8 @@ type PostWorkerCompletion struct {
 // never becomes a merge gate while real backend execution is disabled.
 type PostWorkerDispatchResult struct {
 	Activated bool
+	Queued    bool
+	Delivered bool
 	Advisory  bool
 	RequestID string
 	Reason    string
@@ -42,7 +44,7 @@ func (s *sessionActivationSink) IsRunning() (bool, error) {
 }
 
 func (s *sessionActivationSink) Deliver(request *Request) error {
-	notice := fmt.Sprintf("Native post-worker Assayer advisory %s is ready for bead %s in rig %s (MR %s). Process it now and inspect the sealed envelope with: gt assayer inspect %s", request.ID, request.BeadID, request.RigName, request.MRID, request.ID)
+	notice := fmt.Sprintf("Native post-worker Assayer advisory %s is ready for bead %s in rig %s (MR %s). Atomically claim it with `gt assayer claim %s`; only the successful claimant may process it. Then inspect the sealed envelope with `gt assayer inspect %s`.", request.ID, request.BeadID, request.RigName, request.MRID, request.ID, request.ID)
 	return tmux.NewTmux().NudgeSessionWithOpts(session.AssayerSessionName(), notice, tmux.NudgeOpts{TownRoot: s.townRoot})
 }
 
@@ -74,6 +76,10 @@ func (d *postWorkerDispatcher) Dispatch(completion PostWorkerCompletion) (*PostW
 	completion.BeadID = strings.TrimSpace(completion.BeadID)
 	completion.RigName = strings.TrimSpace(completion.RigName)
 	completion.MRID = strings.TrimSpace(completion.MRID)
+	if !contains(policy.Automation.PostWorker.EligibleRigs, completion.RigName) {
+		result.Reason = fmt.Sprintf("rig %s is not eligible for backend assurance", completion.RigName)
+		return result, nil
+	}
 	if completion.BeadID == "" || completion.RigName == "" {
 		return nil, fmt.Errorf("post-worker Assayer dispatch requires bead id and rig name")
 	}
@@ -81,38 +87,55 @@ func (d *postWorkerDispatcher) Dispatch(completion PostWorkerCompletion) (*PostW
 		result.Reason = "merge request required"
 		return result, nil
 	}
-	running, err := d.sink.IsRunning()
-	if err != nil {
-		return nil, fmt.Errorf("checking Assayer session: %w", err)
-	}
-	if !running {
-		return nil, ErrNotRunning
-	}
 	authorizer := NewAuthorizer(d.townRoot)
 	request, created, err := authorizer.createPostWorker(completion, policy.Automation.PostWorker.Mode)
 	if err != nil {
 		return nil, err
 	}
 	result.RequestID = request.ID
-	if !created && request.State != StateRequested {
-		if request.State == StateConsumed {
-			result.Reason = "already activated"
-		} else {
-			result.Reason = fmt.Sprintf("existing request is %s", request.State)
-		}
-		return result, nil
-	}
-	requestID := request.ID
-	request, err = authorizer.consumeLifecycleMayor(requestID)
-	if err != nil {
-		if errors.Is(err, ErrConsumed) {
-			stored, getErr := authorizer.Get(requestID)
-			if getErr == nil && (stored.State == StateConsumed || stored.State == StateDeliveryFailed) {
-				result.Reason = "already activated"
-				return result, nil
+	if created || request.State == StateRequested {
+		requestID := request.ID
+		request, err = authorizer.authorizeLifecycleMayor(requestID)
+		if err != nil {
+			if !errors.Is(err, ErrConsumed) {
+				return nil, err
+			}
+			request, err = authorizer.Get(requestID)
+			if err != nil {
+				return nil, err
 			}
 		}
+	}
+	switch request.State {
+	case StateDelivered, StateConsumed, StateCompleted:
+		result.Reason = "already activated"
+		return result, nil
+	case StateDelivering:
+		result.Queued = true
+		result.Reason = "delivery in progress"
+		return result, nil
+	case StateAuthorized, StateDeliveryFailed:
+		// Ready for the single native delivery owner below.
+	default:
+		return nil, fmt.Errorf("post-worker request %s is in unexpected state %s", request.ID, request.State)
+	}
+	running, err := d.sink.IsRunning()
+	if err != nil {
+		return nil, fmt.Errorf("checking Assayer session: %w", err)
+	}
+	if !running {
+		result.Queued = true
+		result.Reason = "waiting for Assayer session"
+		return result, nil
+	}
+	request, started, err := authorizer.beginPostWorkerDelivery(request.ID)
+	if err != nil {
 		return nil, err
+	}
+	if !started {
+		result.Queued = request.State == StateDelivering
+		result.Reason = "already activated"
+		return result, nil
 	}
 	if err := d.sink.Deliver(request); err != nil {
 		if recordErr := authorizer.MarkDeliveryFailed(request.ID, err); recordErr != nil {
@@ -120,6 +143,84 @@ func (d *postWorkerDispatcher) Dispatch(completion PostWorkerCompletion) (*PostW
 		}
 		return nil, err
 	}
+	if err := authorizer.markPostWorkerDelivered(request.ID); err != nil {
+		return nil, err
+	}
 	result.Activated = true
+	result.Delivered = true
 	return result, nil
+}
+
+// DeliverPending replays durable post-worker activations when the Assayer
+// session starts. Delivered-but-unclaimed requests are safe to redeliver because
+// ClaimPostWorker is the single atomic execution gate.
+func (d *postWorkerDispatcher) DeliverPending() (int, error) {
+	return d.deliverPending(false)
+}
+
+func (d *postWorkerDispatcher) DeliverPendingAfterRestart() (int, error) {
+	return d.deliverPending(true)
+}
+
+func (d *postWorkerDispatcher) deliverPending(recoverClaims bool) (int, error) {
+	policy, err := LoadPolicy(d.townRoot)
+	if err != nil {
+		return 0, err
+	}
+	if !policy.Enabled || !policy.Automation.PostWorker.Enabled {
+		return 0, nil
+	}
+	running, err := d.sink.IsRunning()
+	if err != nil {
+		return 0, err
+	}
+	if !running {
+		return 0, ErrNotRunning
+	}
+	authorizer := NewAuthorizer(d.townRoot)
+	requests, err := authorizer.listRequests()
+	if err != nil {
+		return 0, err
+	}
+	delivered := 0
+	var deliveryErrors []error
+	for _, request := range requests {
+		if request.Origin != OriginPostWorker {
+			continue
+		}
+		switch request.State {
+		case StateDelivering, StateDelivered:
+			if !recoverClaims {
+				continue
+			}
+			if err := authorizer.requeuePostWorker(request.ID, "Assayer session restarted before claim"); err != nil {
+				deliveryErrors = append(deliveryErrors, err)
+				continue
+			}
+		case StateConsumed:
+			if !recoverClaims {
+				continue
+			}
+			if err := authorizer.requeuePostWorker(request.ID, "Assayer session restarted before completion"); err != nil {
+				deliveryErrors = append(deliveryErrors, err)
+				continue
+			}
+		case StateAuthorized, StateDeliveryFailed:
+			// Already queued for delivery.
+		default:
+			continue
+		}
+		result, dispatchErr := d.Dispatch(PostWorkerCompletion{
+			BeadID: request.BeadID, RigName: request.RigName, PolecatName: request.PolecatName,
+			Branch: request.Branch, MRID: request.MRID,
+		})
+		if dispatchErr != nil {
+			deliveryErrors = append(deliveryErrors, fmt.Errorf("request %s: %w", request.ID, dispatchErr))
+			continue
+		}
+		if result.Delivered {
+			delivered++
+		}
+	}
+	return delivered, errors.Join(deliveryErrors...)
 }

@@ -274,8 +274,10 @@ func handlePolecatDonePendingMR(bd *BdCli, workDir, rigName string, payload *Pol
 		return result
 	}
 
-	activatePostWorkerAssayer(workDir, rigName, payload)
-	notifyRefineryMergeReady(workDir, rigName, result)
+	runAssayerBeforeRefinery(payload,
+		func() { activatePostWorkerAssayer(workDir, rigName, payload) },
+		func() { notifyRefineryMergeReady(workDir, rigName, result) },
+	)
 
 	result.Handled = true
 	result.WispCreated = wispID
@@ -304,6 +306,17 @@ func activatePostWorkerAssayer(workDir, rigName string, payload *PolecatDonePayl
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "witness: Assayer advisory activation failed for MR %s: %v (Refinery will continue)\n", payload.MRID, err)
 	}
+}
+
+func shouldActivatePostWorkerAssayer(payload *PolecatDonePayload) bool {
+	return payload != nil && payload.Exit == string(ExitTypeCompleted) && payload.MRID != ""
+}
+
+func runAssayerBeforeRefinery(payload *PolecatDonePayload, activateAssayer, notifyRefinery func()) {
+	if shouldActivatePostWorkerAssayer(payload) {
+		activateAssayer()
+	}
+	notifyRefinery()
 }
 
 // notifyRefineryMergeReady emits a MERGE_READY channel event and nudges the
@@ -1941,15 +1954,16 @@ func processDiscoveredCompletion(bd *BdCli, workDir, rigName string, payload *Po
 			discovery.Error = fmt.Errorf("updating wisp state: %w", err)
 		}
 
-		activatePostWorkerAssayer(workDir, rigName, payload)
-
-		// Nudge refinery to check merge queue (no permanent mail needed).
-		townRoot, _ := workspace.Find(workDir)
-		if nudgeErr := nudgeRefinery(townRoot, rigName); nudgeErr != nil {
-			if discovery.Error == nil {
-				discovery.Error = fmt.Errorf("nudging refinery: %w (non-fatal)", nudgeErr)
-			}
-		}
+		runAssayerBeforeRefinery(payload,
+			func() { activatePostWorkerAssayer(workDir, rigName, payload) },
+			func() {
+				// Nudge refinery to check merge queue (no permanent mail needed).
+				townRoot, _ := workspace.Find(workDir)
+				if nudgeErr := nudgeRefinery(townRoot, rigName); nudgeErr != nil && discovery.Error == nil {
+					discovery.Error = fmt.Errorf("nudging refinery: %w (non-fatal)", nudgeErr)
+				}
+			},
+		)
 
 		discovery.Action = fmt.Sprintf("merge-ready-nudged (MR=%s, wisp=%s)", payload.MRID, wispID)
 

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,11 +23,21 @@ type RequestState string
 
 type RequestOrigin string
 
+type RunOutcome string
+
 const (
 	StateRequested      RequestState = "requested"
 	StateAuthorized     RequestState = "authorized"
+	StateDelivering     RequestState = "delivering"
+	StateDelivered      RequestState = "delivered"
 	StateConsumed       RequestState = "consumed"
+	StateCompleted      RequestState = "completed"
 	StateDeliveryFailed RequestState = "delivery_failed"
+)
+
+const (
+	OutcomeAdvisoryComplete RunOutcome = "advisory_complete"
+	OutcomeBlocked          RunOutcome = "blocked"
 )
 
 const (
@@ -57,6 +68,8 @@ type Request struct {
 	AuthorizedBy  string        `json:"authorized_by,omitempty"`
 	ExpiresAt     *time.Time    `json:"expires_at,omitempty"`
 	ConsumedAt    *time.Time    `json:"consumed_at,omitempty"`
+	CompletedAt   *time.Time    `json:"completed_at,omitempty"`
+	Outcome       RunOutcome    `json:"outcome,omitempty"`
 	DeliveryError string        `json:"delivery_error,omitempty"`
 }
 
@@ -220,10 +233,11 @@ func (a *Authorizer) ConsumeMayor(id string) (*Request, error) {
 	return result, err
 }
 
-// consumeLifecycleMayor is reserved for native lifecycle integrations. It
+// authorizeLifecycleMayor is reserved for native lifecycle integrations. It
 // applies the same policy gate and audit identity as Mayor without trusting an
-// agent-controlled environment variable.
-func (a *Authorizer) consumeLifecycleMayor(id string) (*Request, error) {
+// agent-controlled environment variable, then leaves execution ownership for
+// the Assayer's atomic claim.
+func (a *Authorizer) authorizeLifecycleMayor(id string) (*Request, error) {
 	policy, err := LoadPolicy(a.townRoot)
 	if err != nil {
 		return nil, err
@@ -241,8 +255,98 @@ func (a *Authorizer) consumeLifecycleMayor(id string) (*Request, error) {
 		request.AuthorizedBy = constants.RoleMayor
 		request.AuthorizedAt = &now
 		request.ExpiresAt = nil
-		request.ConsumedAt = &now
+		request.ConsumedAt = nil
+		request.State = StateAuthorized
+		copy := *request
+		result = &copy
+		return nil
+	})
+	return result, err
+}
+
+func (a *Authorizer) beginPostWorkerDelivery(id string) (*Request, bool, error) {
+	var result *Request
+	started := false
+	err := a.update(id, func(request *Request) error {
+		if request.Origin != OriginPostWorker {
+			return fmt.Errorf("request %s is not a post-worker activation", request.ID)
+		}
+		switch request.State {
+		case StateAuthorized, StateDeliveryFailed:
+			request.State = StateDelivering
+			request.DeliveryError = ""
+			started = true
+		case StateDelivering, StateDelivered, StateConsumed, StateCompleted:
+			// Another delivery or Assayer claim already owns this request.
+		default:
+			return fmt.Errorf("cannot deliver post-worker request from state %s", request.State)
+		}
+		copy := *request
+		result = &copy
+		return nil
+	})
+	return result, started, err
+}
+
+func (a *Authorizer) markPostWorkerDelivered(id string) error {
+	return a.update(id, func(request *Request) error {
+		if request.Origin != OriginPostWorker {
+			return fmt.Errorf("request %s is not a post-worker activation", request.ID)
+		}
+		if request.State == StateConsumed || request.State == StateCompleted {
+			return nil
+		}
+		if request.State != StateDelivering {
+			return fmt.Errorf("cannot mark post-worker request delivered from state %s", request.State)
+		}
+		request.State = StateDelivered
+		request.DeliveryError = ""
+		return nil
+	})
+}
+
+// ClaimPostWorker atomically gives the delivered run to the native Assayer
+// role. Repeated or duplicate activation nudges cannot claim it twice.
+func (a *Authorizer) ClaimPostWorker(id string) (*Request, error) {
+	if err := RequireAssayerSession(); err != nil {
+		return nil, err
+	}
+	var result *Request
+	err := a.update(id, func(request *Request) error {
+		if request.Origin != OriginPostWorker {
+			return fmt.Errorf("request %s is not a post-worker activation", request.ID)
+		}
+		if request.State != StateDelivering && request.State != StateDelivered {
+			return fmt.Errorf("%w: request state is %s", ErrConsumed, request.State)
+		}
+		now := a.now().UTC()
 		request.State = StateConsumed
+		request.ConsumedAt = &now
+		copy := *request
+		result = &copy
+		return nil
+	})
+	return result, err
+}
+
+// CompletePostWorker records the response-only terminal disposition owned by
+// Assayer. It is an audit receipt, never a merge approval.
+func (a *Authorizer) CompletePostWorker(id string, outcome RunOutcome) (*Request, error) {
+	if err := RequireAssayerSession(); err != nil {
+		return nil, err
+	}
+	if outcome != OutcomeAdvisoryComplete && outcome != OutcomeBlocked {
+		return nil, fmt.Errorf("unsupported Assayer post-worker outcome %q", outcome)
+	}
+	var result *Request
+	err := a.update(id, func(request *Request) error {
+		if request.Origin != OriginPostWorker || request.State != StateConsumed {
+			return fmt.Errorf("cannot complete post-worker request from state %s", request.State)
+		}
+		now := a.now().UTC()
+		request.State = StateCompleted
+		request.Outcome = outcome
+		request.CompletedAt = &now
 		copy := *request
 		result = &copy
 		return nil
@@ -264,6 +368,22 @@ func RequireMayorSession() error {
 		return nil
 	}
 	return fmt.Errorf("%w: operation requires the native Mayor role", ErrUnauthorized)
+}
+
+// RequireAssayerSession recognizes only the native Assayer role environment.
+func RequireAssayerSession() error {
+	role := strings.TrimSpace(os.Getenv("GT_ROLE"))
+	actor := strings.TrimSpace(os.Getenv("BD_ACTOR"))
+	if role != "" && role != constants.RoleAssayer {
+		return fmt.Errorf("%w: conflicting agent role %s", ErrUnauthorized, role)
+	}
+	if actor != "" && actor != constants.RoleAssayer {
+		return fmt.Errorf("%w: conflicting Beads actor %s", ErrUnauthorized, actor)
+	}
+	if role == constants.RoleAssayer || actor == constants.RoleAssayer {
+		return nil
+	}
+	return fmt.Errorf("%w: operation requires the native Assayer role", ErrUnauthorized)
 }
 
 // RequireNeutralHumanShell rejects known Gas Town and Beads agent identities.
@@ -317,12 +437,53 @@ func (a *Authorizer) Get(id string) (*Request, error) {
 	return &request, nil
 }
 
-// MarkDeliveryFailed seals a consumed request when the activation notice could
-// not be delivered. The capability remains burned and the terminal reason is
-// inspectable; a retry requires a fresh request and authorization.
+func (a *Authorizer) listRequests() ([]*Request, error) {
+	entries, err := os.ReadDir(a.requestsDir())
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	requests := make([]*Request, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		request, getErr := a.Get(strings.TrimSuffix(entry.Name(), ".json"))
+		if getErr != nil {
+			return nil, getErr
+		}
+		requests = append(requests, request)
+	}
+	sort.Slice(requests, func(i, j int) bool {
+		return requests[i].RequestedAt.Before(requests[j].RequestedAt)
+	})
+	return requests, nil
+}
+
+func (a *Authorizer) requeuePostWorker(id, reason string) error {
+	return a.update(id, func(request *Request) error {
+		if request.Origin != OriginPostWorker || (request.State != StateDelivering && request.State != StateDelivered && request.State != StateConsumed) {
+			return fmt.Errorf("cannot requeue post-worker request from state %s", request.State)
+		}
+		request.State = StateDeliveryFailed
+		request.DeliveryError = reason
+		request.ConsumedAt = nil
+		return nil
+	})
+}
+
+// MarkDeliveryFailed seals the delivery error. Manual capabilities remain
+// burned; native post-worker requests retain their identity and can be retried
+// by DeliverPending because Assayer claim is the execution gate.
 func (a *Authorizer) MarkDeliveryFailed(id string, deliveryErr error) error {
 	return a.update(id, func(request *Request) error {
-		if request.State != StateConsumed {
+		allowed := request.State == StateConsumed
+		if request.Origin == OriginPostWorker {
+			allowed = request.State == StateDelivering
+		}
+		if !allowed {
 			return fmt.Errorf("cannot record delivery failure from state %s", request.State)
 		}
 		request.State = StateDeliveryFailed

@@ -22,6 +22,7 @@ var (
 	assayerAgentOverride string
 	assayerMode          string
 	assayerToken         string
+	assayerOutcome       string
 	assayerTTL           time.Duration
 )
 
@@ -92,7 +93,7 @@ var assayerStatusCmd = &cobra.Command{
 		fmt.Printf("Assayer: %s\n", map[bool]string{true: "running", false: "stopped"}[running])
 		fmt.Printf("Phase: %s (real backend execution: %t)\n", policy.Phase, policy.Authority.RealBackendExecution)
 		fmt.Printf("Run authorization: human capability=%t, mayor=%t\n", policy.Authority.HumanRunAuthorization, policy.Authority.MayorRunAuthorization)
-		fmt.Printf("Post-worker automation: enabled=%t, mode=%s, advisory=%t\n", policy.Automation.PostWorker.Enabled, policy.Automation.PostWorker.Mode, !policy.Authority.RealBackendExecution)
+		fmt.Printf("Post-worker automation: enabled=%t, mode=%s, advisory=%t, eligible_rigs=%s\n", policy.Automation.PostWorker.Enabled, policy.Automation.PostWorker.Mode, !policy.Authority.RealBackendExecution, strings.Join(policy.Automation.PostWorker.EligibleRigs, ","))
 		fmt.Printf("Context roots: %d\n", len(policy.ContextRoots))
 		return nil
 	},
@@ -122,6 +123,7 @@ var assayerWorkersCmd = &cobra.Command{
 }
 
 var assayerContextCmd = &cobra.Command{Use: "context", Short: "Manage read-only Assayer specification roots", RunE: requireSubcommand}
+var assayerAutomationCmd = &cobra.Command{Use: "automation", Short: "Manage native Assayer lifecycle automation", RunE: requireSubcommand}
 
 var assayerContextAddCmd = &cobra.Command{
 	Use:   "add <absolute-directory>",
@@ -139,6 +141,46 @@ var assayerContextAddCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("%s Added read-only Assayer context root: %s\n", style.Bold.Render("✓"), args[0])
+		return nil
+	},
+}
+
+var assayerAutomationEnableCmd = &cobra.Command{
+	Use:   "enable <backend-rig> [backend-rig...]",
+	Short: "Enable post-worker advisory dispatch for explicit backend rigs",
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		if err := assayer.RequireNeutralHumanShell(); err != nil {
+			return fmt.Errorf("Assayer automation policy must be changed from a neutral human shell: %w", err)
+		}
+		townRoot, err := workspace.FindFromCwdOrError()
+		if err != nil {
+			return err
+		}
+		if err := assayer.ConfigurePostWorkerAutomation(townRoot, true, args); err != nil {
+			return err
+		}
+		fmt.Printf("%s Enabled automatic Assayer advisory for backend rigs: %s\n", style.Bold.Render("✓"), strings.Join(args, ", "))
+		return nil
+	},
+}
+
+var assayerAutomationDisableCmd = &cobra.Command{
+	Use:   "disable",
+	Short: "Disable native post-worker advisory dispatch",
+	Args:  cobra.NoArgs,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		if err := assayer.RequireNeutralHumanShell(); err != nil {
+			return fmt.Errorf("Assayer automation policy must be changed from a neutral human shell: %w", err)
+		}
+		townRoot, err := workspace.FindFromCwdOrError()
+		if err != nil {
+			return err
+		}
+		if err := assayer.ConfigurePostWorkerAutomation(townRoot, false, nil); err != nil {
+			return err
+		}
+		fmt.Printf("%s Disabled automatic Assayer advisory\n", style.Bold.Render("✓"))
 		return nil
 	},
 }
@@ -241,6 +283,46 @@ var assayerInspectCmd = &cobra.Command{
 	},
 }
 
+var assayerClaimCmd = &cobra.Command{
+	Use:   "claim <request-id>",
+	Short: "Atomically claim one delivered native post-worker run",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		townRoot, err := workspace.FindFromCwdOrError()
+		if err != nil {
+			return err
+		}
+		request, err := assayer.NewAuthorizer(townRoot).ClaimPostWorker(args[0])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s Claimed native Assayer request %s for %s\n", style.Bold.Render("✓"), request.ID, request.BeadID)
+		return nil
+	},
+}
+
+var assayerCompleteCmd = &cobra.Command{
+	Use:   "complete <request-id>",
+	Short: "Record the response-only terminal disposition of a claimed run",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		townRoot, err := workspace.FindFromCwdOrError()
+		if err != nil {
+			return err
+		}
+		request, err := assayer.NewAuthorizer(townRoot).CompletePostWorker(args[0], assayer.RunOutcome(assayerOutcome))
+		if err != nil {
+			return err
+		}
+		notice := fmt.Sprintf("Assayer advisory completed: request=%s bead=%s rig=%s outcome=%s (response-only; not merge approval)", request.ID, request.BeadID, request.RigName, request.Outcome)
+		if nudgeErr := tmux.NewTmux().NudgeSessionWithOpts(session.MayorSessionName(), notice, tmux.NudgeOpts{TownRoot: townRoot}); nudgeErr != nil {
+			style.PrintWarning("Assayer completion recorded, but Mayor nudge failed: %v", nudgeErr)
+		}
+		fmt.Printf("%s Completed native Assayer request %s (%s)\n", style.Bold.Render("✓"), request.ID, request.Outcome)
+		return nil
+	},
+}
+
 var assayerGuardBashCmd = &cobra.Command{
 	Use:    "guard-bash",
 	Short:  "Enforce the Phase 1 Assayer shell allowlist",
@@ -255,7 +337,7 @@ var assayerGuardBashCmd = &cobra.Command{
 			return NewSilentExit(2)
 		}
 		if !assayerBashAllowed(input.ToolInput.Command) {
-			fmt.Fprintln(os.Stderr, "BLOCKED: Assayer Phase 1 permits only read-only Assayer inspection commands.")
+			fmt.Fprintln(os.Stderr, "BLOCKED: Assayer Phase 1 permits only bounded lifecycle and read-only inspection commands.")
 			return NewSilentExit(2)
 		}
 		return nil
@@ -267,9 +349,11 @@ func init() {
 	assayerRequestCmd.Flags().StringVar(&assayerMode, "mode", "harden", "Assurance mode")
 	assayerAuthorizeCmd.Flags().DurationVar(&assayerTTL, "ttl", 0, "Authorization lifetime (default from assayer.json)")
 	assayerRunCmd.Flags().StringVar(&assayerToken, "token", "", "One-use human authorization capability")
+	assayerCompleteCmd.Flags().StringVar(&assayerOutcome, "outcome", string(assayer.OutcomeAdvisoryComplete), "Terminal response-only outcome: advisory_complete or blocked")
 	assayerContextCmd.AddCommand(assayerContextAddCmd)
+	assayerAutomationCmd.AddCommand(assayerAutomationEnableCmd, assayerAutomationDisableCmd)
 	assayerCmd.AddCommand(assayerStartCmd, assayerStopCmd, assayerStatusCmd, assayerAttachCmd)
-	assayerCmd.AddCommand(assayerWorkersCmd, assayerContextCmd, assayerRequestCmd, assayerAuthorizeCmd, assayerRunCmd, assayerInspectCmd, assayerGuardBashCmd)
+	assayerCmd.AddCommand(assayerWorkersCmd, assayerContextCmd, assayerAutomationCmd, assayerRequestCmd, assayerAuthorizeCmd, assayerRunCmd, assayerInspectCmd, assayerClaimCmd, assayerCompleteCmd, assayerGuardBashCmd)
 	rootCmd.AddCommand(assayerCmd)
 }
 
@@ -285,9 +369,13 @@ func assayerBashAllowed(command string) bool {
 	if len(fields) == 3 && fields[0] == "gt" && fields[1] == "assayer" {
 		return fields[2] == "status" || fields[2] == "workers"
 	}
-	if len(fields) == 4 && fields[0] == "gt" && fields[1] == "assayer" && fields[2] == "inspect" {
+	if len(fields) == 4 && fields[0] == "gt" && fields[1] == "assayer" && (fields[2] == "inspect" || fields[2] == "claim") {
 		decoded, err := hex.DecodeString(fields[3])
 		return err == nil && len(decoded) == 16
+	}
+	if len(fields) == 6 && fields[0] == "gt" && fields[1] == "assayer" && fields[2] == "complete" && fields[4] == "--outcome" {
+		decoded, err := hex.DecodeString(fields[3])
+		return err == nil && len(decoded) == 16 && (fields[5] == string(assayer.OutcomeAdvisoryComplete) || fields[5] == string(assayer.OutcomeBlocked))
 	}
 	return false
 }

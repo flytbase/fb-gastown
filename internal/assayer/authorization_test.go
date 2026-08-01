@@ -87,6 +87,18 @@ func TestNonMayorCannotConsumeRequestedRunWithoutToken(t *testing.T) {
 	}
 }
 
+func TestOnlyNativeAssayerRoleCanClaimPostWorkerRun(t *testing.T) {
+	t.Setenv("GT_ROLE", "mayor")
+	t.Setenv("BD_ACTOR", "")
+	if err := RequireAssayerSession(); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("RequireAssayerSession() error = %v, want ErrUnauthorized", err)
+	}
+	t.Setenv("GT_ROLE", "assayer")
+	if err := RequireAssayerSession(); err != nil {
+		t.Fatalf("RequireAssayerSession() rejected Assayer: %v", err)
+	}
+}
+
 func TestDeliveryFailureSealsConsumedRequest(t *testing.T) {
 	t.Setenv("GT_ROLE", "")
 	townRoot := t.TempDir()
