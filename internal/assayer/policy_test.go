@@ -93,6 +93,30 @@ func TestEnsureHomePreservesExistingPolicy(t *testing.T) {
 	}
 }
 
+func TestLoadPolicyEnablesMayorTrustForLegacyPolicy(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := EnsureHome(townRoot, ""); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(townRoot, "assayer", "assayer.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := strings.Replace(string(data), "    \"mayor_run_authorization\": true,\n", "", 1)
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	policy, err := LoadPolicy(townRoot)
+	if err != nil {
+		t.Fatalf("LoadPolicy() error = %v", err)
+	}
+	if !policy.Authority.MayorRunAuthorization {
+		t.Fatal("legacy policy did not inherit native Mayor authorization")
+	}
+}
+
 func TestWorkersAreBackendOnlyAndCannotDelegate(t *testing.T) {
 	workers := Workers()
 	if len(workers) != 5 {

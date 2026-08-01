@@ -23,6 +23,7 @@
   },
   "authority": {
     "human_run_authorization": true,
+    "mayor_run_authorization": true,
     "production_writes": false,
     "git_mutations": false,
     "real_backend_execution": false

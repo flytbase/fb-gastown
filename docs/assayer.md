@@ -51,8 +51,8 @@ credentials, and user-specific paths are not embedded in the binary.
 
 ## Run authorization
 
-Each run requires a short-lived, one-use capability bound to one task, rig, and
-mode:
+Humans can activate a run with a short-lived, one-use capability bound to one
+task, rig, and mode:
 
 ```bash
 gt assayer request <bead-id> <rig> --mode harden
@@ -61,9 +61,20 @@ gt assayer run <request-id> --token <capability>
 ```
 
 The authorization command rejects agent-session identities and must be run by
-the human from a neutral shell. Phase 1 activation only notifies the Assayer of
-the consumed request. A project assurance kernel and locked authority are still
-required before any governed worker flow can claim deterministic evidence.
+the human from a neutral shell.
+
+Mayor is the sole trusted agent principal and may authorize and consume a new
+request directly without a token:
+
+```bash
+gt assayer request <bead-id> <rig> --mode harden
+gt assayer run <request-id>
+```
+
+The request records `authorized_by: mayor`. Clerk, Assayer, Polecats, Crew, and
+other roles cannot use this path. Phase 1 activation only notifies the Assayer
+of the consumed request. A project assurance kernel and locked authority are
+still required before any governed worker flow can claim deterministic evidence.
 
 ## Trust model
 

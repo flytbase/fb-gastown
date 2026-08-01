@@ -91,6 +91,7 @@ var assayerStatusCmd = &cobra.Command{
 		}
 		fmt.Printf("Assayer: %s\n", map[bool]string{true: "running", false: "stopped"}[running])
 		fmt.Printf("Phase: %s (real backend execution: %t)\n", policy.Phase, policy.Authority.RealBackendExecution)
+		fmt.Printf("Run authorization: human capability=%t, mayor=%t\n", policy.Authority.HumanRunAuthorization, policy.Authority.MayorRunAuthorization)
 		fmt.Printf("Context roots: %d\n", len(policy.ContextRoots))
 		return nil
 	},
@@ -183,12 +184,9 @@ var assayerAuthorizeCmd = &cobra.Command{
 
 var assayerRunCmd = &cobra.Command{
 	Use:   "run <request-id>",
-	Short: "Consume human authorization and activate a response-only Phase 1 run",
+	Short: "Activate a response-only run using human capability or Mayor authority",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		if assayerToken == "" {
-			return fmt.Errorf("--token is required")
-		}
 		townRoot, err := workspace.FindFromCwdOrError()
 		if err != nil {
 			return err
@@ -201,7 +199,13 @@ var assayerRunCmd = &cobra.Command{
 		if !running {
 			return fmt.Errorf("Assayer is not running; start it before consuming authorization with gt assayer start")
 		}
-		request, err := assayer.NewAuthorizer(townRoot).Consume(args[0], assayerToken)
+		authorizer := assayer.NewAuthorizer(townRoot)
+		var request *assayer.Request
+		if assayerToken == "" {
+			request, err = authorizer.ConsumeMayor(args[0])
+		} else {
+			request, err = authorizer.Consume(args[0], assayerToken)
+		}
 		if err != nil {
 			return err
 		}
@@ -212,7 +216,7 @@ var assayerRunCmd = &cobra.Command{
 			}
 			return err
 		}
-		fmt.Printf("%s Activated response-only Assayer request %s\n", style.Bold.Render("✓"), request.ID)
+		fmt.Printf("%s Activated response-only Assayer request %s (authorized by %s)\n", style.Bold.Render("✓"), request.ID, request.AuthorizedBy)
 		return nil
 	},
 }

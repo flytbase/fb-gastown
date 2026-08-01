@@ -48,6 +48,7 @@ type Policy struct {
 	Limits           Limits   `json:"limits"`
 	Authority        struct {
 		HumanRunAuthorization bool `json:"human_run_authorization"`
+		MayorRunAuthorization bool `json:"mayor_run_authorization"`
 		ProductionWrites      bool `json:"production_writes"`
 		GitMutations          bool `json:"git_mutations"`
 		RealBackendExecution  bool `json:"real_backend_execution"`
@@ -141,6 +142,18 @@ func LoadPolicy(townRoot string) (*Policy, error) {
 	var policy Policy
 	if err := json.Unmarshal(data, &policy); err != nil {
 		return nil, fmt.Errorf("decoding Assayer policy: %w", err)
+	}
+	// Policies created before Mayor trust was introduced do not contain this
+	// key. Preserve explicit false while enabling the new native default for
+	// legacy Towns without rewriting their policy file.
+	var raw struct {
+		Authority map[string]json.RawMessage `json:"authority"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("decoding Assayer policy authority: %w", err)
+	}
+	if _, present := raw.Authority["mayor_run_authorization"]; !present {
+		policy.Authority.MayorRunAuthorization = true
 	}
 	if err := policy.Validate(); err != nil {
 		return nil, fmt.Errorf("validating Assayer policy: %w", err)

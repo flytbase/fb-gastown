@@ -29,8 +29,61 @@ func TestRunAuthorizationIsOneUseAndBoundToRequest(t *testing.T) {
 	if consumed.BeadID != "gt-123" || consumed.RigName != "api" || consumed.Mode != "harden" {
 		t.Fatalf("unexpected consumed request: %#v", consumed)
 	}
+	if consumed.AuthorizedBy != "human" {
+		t.Fatalf("AuthorizedBy = %q, want human", consumed.AuthorizedBy)
+	}
 	if _, err := authorizer.Consume(request.ID, token); err == nil {
 		t.Fatal("Consume accepted a reused capability")
+	}
+}
+
+func TestMayorCanAuthorizeAndConsumeRequestedRunWithoutToken(t *testing.T) {
+	t.Setenv("GT_ROLE", "mayor")
+	t.Setenv("BD_ACTOR", "")
+	townRoot := t.TempDir()
+	if err := EnsureHome(townRoot, ""); err != nil {
+		t.Fatal(err)
+	}
+	authorizer := NewAuthorizer(townRoot)
+	request, err := authorizer.Create("gt-456", "api", "harden")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	consumed, err := authorizer.ConsumeMayor(request.ID)
+	if err != nil {
+		t.Fatalf("ConsumeMayor() error = %v", err)
+	}
+	if consumed.State != StateConsumed || consumed.AuthorizedBy != "mayor" {
+		t.Fatalf("unexpected Mayor-consumed request: %#v", consumed)
+	}
+	if consumed.AuthorizedAt == nil || consumed.ConsumedAt == nil || consumed.TokenHash != "" {
+		t.Fatalf("Mayor authorization was not sealed correctly: %#v", consumed)
+	}
+}
+
+func TestNonMayorCannotConsumeRequestedRunWithoutToken(t *testing.T) {
+	t.Setenv("GT_ROLE", "assayer")
+	t.Setenv("BD_ACTOR", "mayor")
+	townRoot := t.TempDir()
+	if err := EnsureHome(townRoot, ""); err != nil {
+		t.Fatal(err)
+	}
+	authorizer := NewAuthorizer(townRoot)
+	request, err := authorizer.Create("gt-789", "api", "harden")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := authorizer.ConsumeMayor(request.ID); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("ConsumeMayor() error = %v, want ErrUnauthorized", err)
+	}
+	stored, err := authorizer.Get(request.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.State != StateRequested {
+		t.Fatalf("request state = %s, want %s", stored.State, StateRequested)
 	}
 }
 

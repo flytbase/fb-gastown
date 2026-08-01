@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/atomicfile"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/lock"
 )
 
@@ -42,6 +43,7 @@ type Request struct {
 	TokenHash     string       `json:"token_hash,omitempty"`
 	RequestedAt   time.Time    `json:"requested_at"`
 	AuthorizedAt  *time.Time   `json:"authorized_at,omitempty"`
+	AuthorizedBy  string       `json:"authorized_by,omitempty"`
 	ExpiresAt     *time.Time   `json:"expires_at,omitempty"`
 	ConsumedAt    *time.Time   `json:"consumed_at,omitempty"`
 	DeliveryError string       `json:"delivery_error,omitempty"`
@@ -131,12 +133,61 @@ func (a *Authorizer) Authorize(id string, ttl time.Duration) (string, *Request, 
 		expires := now.Add(ttl)
 		hash := sha256.Sum256([]byte(token))
 		request.TokenHash = hex.EncodeToString(hash[:])
+		request.AuthorizedBy = "human"
 		request.AuthorizedAt, request.ExpiresAt, request.State = &now, &expires, StateAuthorized
 		copy := *request
 		result = &copy
 		return nil
 	})
 	return token, result, err
+}
+
+// ConsumeMayor lets the trusted Town Mayor authorize and consume a requested
+// run in one auditable transition. Other agent roles cannot use this path.
+func (a *Authorizer) ConsumeMayor(id string) (*Request, error) {
+	if err := RequireMayorSession(); err != nil {
+		return nil, err
+	}
+	policy, err := LoadPolicy(a.townRoot)
+	if err != nil {
+		return nil, err
+	}
+	if !policy.Authority.MayorRunAuthorization {
+		return nil, fmt.Errorf("%w: Mayor run authorization is disabled by Assayer policy", ErrUnauthorized)
+	}
+	var result *Request
+	err = a.update(id, func(request *Request) error {
+		if request.State != StateRequested {
+			return fmt.Errorf("%w: request state is %s", ErrConsumed, request.State)
+		}
+		now := a.now().UTC()
+		request.TokenHash = ""
+		request.AuthorizedBy = constants.RoleMayor
+		request.AuthorizedAt = &now
+		request.ExpiresAt = nil
+		request.ConsumedAt = &now
+		request.State = StateConsumed
+		copy := *request
+		result = &copy
+		return nil
+	})
+	return result, err
+}
+
+// RequireMayorSession recognizes only the native Mayor role environment.
+func RequireMayorSession() error {
+	role := strings.TrimSpace(os.Getenv("GT_ROLE"))
+	actor := strings.TrimSpace(os.Getenv("BD_ACTOR"))
+	if role != "" && role != constants.RoleMayor {
+		return fmt.Errorf("%w: conflicting agent role %s", ErrUnauthorized, role)
+	}
+	if actor != "" && actor != constants.RoleMayor {
+		return fmt.Errorf("%w: conflicting Beads actor %s", ErrUnauthorized, actor)
+	}
+	if role == constants.RoleMayor || actor == constants.RoleMayor {
+		return nil
+	}
+	return fmt.Errorf("%w: operation requires the native Mayor role", ErrUnauthorized)
 }
 
 // RequireNeutralHumanShell rejects known Gas Town and Beads agent identities.
